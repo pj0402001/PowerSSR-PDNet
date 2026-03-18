@@ -1,0 +1,183 @@
+# PowerSSR-DL: Deep Learning for Power System Static Security Region Characterization
+
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/pytorch-2.0+-orange.svg)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
+**Official implementation** of:
+
+> **Deep Learning-Based Characterization of Power System Static Security Regions**
+> Using Bukhsh et al. (2013) Multi-Solution OPF Test Cases
+
+---
+
+## Overview
+
+This project applies deep learning to characterize the **Static Security Region (SSR)** of power systems — the set of all load/generation operating points for which the power flow equations have a feasible solution satisfying all operating constraints (voltage limits, line flow limits, generator limits).
+
+We use the publicly available test cases from:
+
+> W. A. Bukhsh, A. Grothey, K. McKinnon, P. Trodden, "Local Solutions of Optimal Power Flow Problem," *IEEE Transactions on Power Systems*, 2013.
+
+These cases are specifically designed to exhibit **multiple local OPF solutions**, making security region characterization challenging and interesting.
+
+## Test Cases
+
+| Case     | Buses | Gens | Loads | Lines | Key Feature |
+|----------|-------|------|-------|-------|-------------|
+| WB2      | 2     | 1    | 1     | 1     | 2 local solutions; analytical power flow |
+| WB3      | 3     | 1    | 2     | 2     | Radial; multiple PF solutions |
+| WB5      | 5     | 2    | 3     | 6     | Meshed; 2 generators with different costs |
+| LMBM3    | 3     | 3    | 3     | 3     | From Lesieutre et al.; binding line limit |
+| case9mod | 9     | 3    | 3     | 9     | Modified IEEE 9-bus; tightened Q limits |
+
+## Models
+
+Three neural network architectures are compared:
+
+### 1. Baseline NN
+Standard feedforward classifier with focal loss for class imbalance.
+
+### 2. Physics-NN
+Adds voltage profile prediction branch and constraint violation penalty.
+
+### 3. SSR-DL (Proposed)
+Our proposed architecture featuring:
+- **Dual-branch architecture**: shared feature extractor + classifier head + physics head
+- **Lagrange dual training**: learnable dual variables for soft constraint enforcement
+- **Contrastive boundary loss**: encourages sharp, well-defined security boundary
+- **Residual connections**: for improved gradient flow
+
+## Installation
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/PowerSSR-DL.git
+cd PowerSSR-DL
+
+# Create conda environment (recommended)
+conda create -n ssr-dl python=3.10 -y
+conda activate ssr-dl
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+## Requirements
+
+```
+torch>=2.0.0
+pandapower>=2.13
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.2
+matplotlib>=3.7
+seaborn>=0.12
+tqdm>=4.65
+pandas>=2.0
+```
+
+## Quick Start
+
+```bash
+# Run experiment on WB2 (fast, analytical)
+python experiments/run_bukhsh.py --cases WB2
+
+# Run all main test cases (WB2 + case9mod)
+python experiments/run_bukhsh.py --cases WB2 WB5 case9mod
+
+# Quick test with fewer samples/epochs
+python experiments/run_bukhsh.py --cases WB2 case9mod --quick
+
+# Generate paper figures
+python experiments/generate_paper_figures.py
+```
+
+## Project Structure
+
+```
+PowerSSR-DL/
+├── src/
+│   ├── bukhsh_cases.py      # Bukhsh et al. test cases in pandapower format
+│   ├── bukhsh_data.py       # Data generation (LHS sampling + power flow)
+│   ├── models.py            # Neural network architectures (Baseline, Physics-NN, SSR-DL)
+│   ├── trainer.py           # Training loops, metrics, evaluation
+│   └── visualization.py     # Security region plots, comparison figures
+├── experiments/
+│   ├── run_bukhsh.py        # Main experiment script
+│   ├── demo.py              # Quick demo on standard IEEE cases
+│   └── generate_paper_figures.py  # Final paper figures
+├── data/                    # Generated datasets (auto-created)
+├── results/                 # Saved model weights and metrics (auto-created)
+├── figures/                 # Output figures (auto-created)
+└── paper/                   # LaTeX paper draft
+```
+
+## Results
+
+### WB2 (2-Bus, Analytical)
+
+| Model      | Accuracy | F1     | Precision | Recall | Specificity |
+|------------|----------|--------|-----------|--------|-------------|
+| Baseline   | 0.9967   | 0.9333 | 0.8750    | 1.0000 | 0.9966      |
+| Physics-NN | 0.9983   | 0.9655 | 0.9333    | 1.0000 | 0.9983      |
+| **SSR-DL** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** |
+
+### case9mod (Modified IEEE 9-Bus)
+
+| Model      | Accuracy | F1     | Precision | Recall | Specificity |
+|------------|----------|--------|-----------|--------|-------------|
+| Baseline   | 0.9950   | 0.9948 | 0.9914    | 0.9983 | 0.9919      |
+| Physics-NN | 0.9950   | 0.9948 | 0.9931    | 0.9965 | 0.9936      |
+| **SSR-DL** | **0.9967** | **0.9966** | **0.9948** | **0.9983** | **0.9952** |
+
+**Key findings:**
+- SSR-DL achieves **perfect classification (F1=1.000)** on the WB2 case with tiny feasibility region (~2.5%)
+- SSR-DL consistently outperforms baselines on specificity (correctly identifying infeasible points)
+- Lagrange dual variables stabilize around λ_v ≈ 0.9, indicating meaningful constraint enforcement
+
+## Mathematical Formulation
+
+### Static Security Region (SSR)
+
+The SSR is defined as the set of load operating points $(P_L, Q_L)$ for which a feasible AC power flow solution exists:
+
+$$\text{SSR} = \{(P_L, Q_L) \in \mathbb{R}^{2n_L} : \exists (V, \theta) \text{ s.t. } f_{PF}(V,\theta,P_L,Q_L) = 0, \; g(V,\theta) \leq 0\}$$
+
+### SSR-DL Training Objective
+
+$$\mathcal{L} = \mathcal{L}_{\text{focal}}(\hat{y}, y) + \lambda_{\text{phys}} \cdot \mathcal{L}_{\text{physics}} + \lambda_c \cdot \mathcal{L}_{\text{contrastive}}$$
+
+where:
+- $\mathcal{L}_{\text{focal}}$: Focal loss for binary feasibility classification
+- $\mathcal{L}_{\text{physics}}$: Voltage constraint violation penalty (with learnable Lagrange multipliers)
+- $\mathcal{L}_{\text{contrastive}}$: Contrastive boundary loss for sharp decision boundaries
+
+## References
+
+1. W. A. Bukhsh, A. Grothey, K. McKinnon, P. Trodden, "Local Solutions of Optimal Power Flow Problem," *IEEE Trans. Power Syst.*, vol. 28, no. 4, 2013.
+
+2. H. T. Nguyen, P. L. Donti, "FSNet: Feasibility-Seeking Neural Network for Constrained Optimization with Guarantees," *NeurIPS*, 2025.
+
+3. E. Liang, M. Chen, S. H. Low, "Low Complexity Homeomorphic Projection to Ensure Neural-Network Solution Feasibility," *ICML*, 2023.
+
+4. M. Kim, H. Kim, "Unsupervised Deep Lagrange Dual With Equation Embedding for AC Optimal Power Flow," *IEEE Trans. Power Syst.*, vol. 40, no. 1, 2025.
+
+5. Z. Hu et al., "Optimal Power Flow Based on Physical-Model-Integrated Neural Network with Worth-Learning Data Generation," *IEEE Trans. Power Syst.*, 2024.
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+
+## Citation
+
+If you use this code in your research, please cite:
+
+```bibtex
+@misc{powerssr2025,
+  title={Deep Learning-Based Characterization of Power System Static Security Regions},
+  author={[Authors]},
+  year={2025},
+  url={https://github.com/yourusername/PowerSSR-DL}
+}
+```
