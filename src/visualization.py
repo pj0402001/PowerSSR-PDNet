@@ -110,7 +110,7 @@ def plot_security_region_2d(
     plt.colorbar(im2, ax=ax, label='P(Feasible)')
     ax.set_xlabel(f'Load {load_idx[0]+1} Active Power P (MW)', fontweight='bold')
     ax.set_ylabel(f'Load {load_idx[1]+1} Active Power P (MW)', fontweight='bold')
-    ax.set_title('SSR-DL Predicted\nSecurity Region', fontweight='bold')
+    ax.set_title('SSR-PDNet Predicted\nSecurity Region', fontweight='bold')
     ax.plot([], [], 'k-', linewidth=2, label='Predicted boundary')
     ax.plot([], [], 'w--', linewidth=1.5, label='True boundary')
     ax.legend(loc='upper right', fontsize=9)
@@ -189,7 +189,7 @@ def plot_security_region_scatter(
     green_red = LinearSegmentedColormap.from_list('gr', [INFEAS_COLOR, FEAS_COLOR])
     scatter = ax.scatter(P1, P2, c=probs_pred, cmap=green_red, s=8, alpha=0.7, vmin=0, vmax=1)
     plt.colorbar(scatter, ax=ax, label='P(Feasible)')
-    ax.set_title('SSR-DL Predicted Probability', fontweight='bold')
+    ax.set_title('SSR-PDNet Predicted Probability', fontweight='bold')
     ax.set_xlabel('Load P1 (MW)', fontweight='bold')
     ax.set_ylabel('Load P2 (MW)', fontweight='bold')
 
@@ -239,10 +239,10 @@ def plot_training_curves(
         ax.set_title(title, fontweight='bold')
         ax.legend(fontsize=9)
 
-    # SSR-DL specific: loss components
-    if 'SSR-DL' in histories and 'loss_focal' in histories['SSR-DL']:
+    # SSR-PDNet specific: loss components
+    if 'SSR-PDNet' in histories and 'loss_focal' in histories['SSR-PDNet']:
         ax = axes[1, 1]
-        hist = histories['SSR-DL']
+        hist = histories['SSR-PDNet']
         for comp, color, label in [
             ('loss_focal', '#1f77b4', 'Focal Loss'),
             ('loss_physics', '#ff7f0e', 'Physics Loss'),
@@ -252,13 +252,13 @@ def plot_training_curves(
                 ax.plot(hist[comp], color=color, label=label, linewidth=1.5)
         ax.set_xlabel('Epoch')
         ax.set_ylabel('Loss')
-        ax.set_title('SSR-DL Loss Components', fontweight='bold')
+        ax.set_title('SSR-PDNet Loss Components', fontweight='bold')
         ax.legend(fontsize=9)
 
     # Lagrange multiplier evolution
-    if 'SSR-DL' in histories and 'lambda_v' in histories['SSR-DL']:
+    if 'SSR-PDNet' in histories and 'lambda_v' in histories['SSR-PDNet']:
         ax = axes[1, 2]
-        hist = histories['SSR-DL']
+        hist = histories['SSR-PDNet']
         ax.plot(hist['lambda_v'], color='#d62728', label='λ_v (voltage)', linewidth=1.5)
         if 'lambda_l' in hist:
             ax.plot(hist['lambda_l'], color='#9467bd', label='λ_l (line)', linewidth=1.5)

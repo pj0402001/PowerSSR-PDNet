@@ -17,7 +17,7 @@ from pathlib import Path
 import time
 import json
 
-from models import BaselineNN, PhysicsNN, SSR_DL, FocalLoss, ContrastiveBoundaryLoss
+from models import BaselineNN, PhysicsNN, SSR_PDNet, FocalLoss, ContrastiveBoundaryLoss
 
 
 class EarlyStopping:
@@ -149,7 +149,7 @@ def train_baseline(
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
 
-            if hasattr(model, 'forward') and isinstance(model, (PhysicsNN, SSR_DL)):
+            if hasattr(model, 'forward') and isinstance(model, (PhysicsNN, SSR_PDNet)):
                 logits, _ = model(X_batch)
             else:
                 logits = model(X_batch)
@@ -167,7 +167,7 @@ def train_baseline(
         with torch.no_grad():
             for X_batch, y_batch in val_loader:
                 X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-                if isinstance(model, (PhysicsNN, SSR_DL)):
+                if isinstance(model, (PhysicsNN, SSR_PDNet)):
                     logits, _ = model(X_batch)
                 else:
                     logits = model(X_batch)
@@ -200,8 +200,8 @@ def train_baseline(
     return history
 
 
-def train_ssr_dl(
-    model: SSR_DL,
+def train_ssr_pdnet(
+    model: SSR_PDNet,
     train_loader: DataLoader,
     val_loader: DataLoader,
     epochs: int = 300,
@@ -213,11 +213,14 @@ def train_ssr_dl(
     lambda_contrastive: float = 0.05,
     v_min: float = 0.9,
     v_max: float = 1.1,
+    voltage_margin: float = 0.02,
     device: torch.device = None,
     patience: int = 40,
+    input_lower_bound: Optional[torch.Tensor] = None,
+    lambda_domain_guard: float = 0.15,
 ) -> Dict:
     """
-    Train the SSR-DL model using combined loss:
+    Train the SSR-PDNet model using combined loss:
     L = L_focal (supervised) + λ_p * L_physics (voltage constraint) +
         λ_b * L_boundary (gradient sharpness) + λ_c * L_contrastive
     With Lagrange dual update for constraint satisfaction.
@@ -244,8 +247,13 @@ def train_ssr_dl(
     history = {
         'train_loss': [], 'val_loss': [], 'val_f1': [], 'val_acc': [],
         'loss_focal': [], 'loss_physics': [], 'loss_contrastive': [],
+        'loss_domain_guard': [],
         'lambda_v': [], 'lambda_l': [],
     }
+
+    lb = None
+    if input_lower_bound is not None:
+        lb = input_lower_bound.to(device).view(1, -1)
 
     for epoch in range(epochs):
         model.train()
@@ -266,8 +274,12 @@ def train_ssr_dl(
             loss_physics = torch.tensor(0.0, device=device)
             if v_pred is not None:
                 lambda_v, lambda_l = model.get_lambda()
-                # Voltage constraint violations
-                v_viol = F.relu(v_min - v_pred) + F.relu(v_pred - v_max)
+                # Voltage security-margin violations.
+                # A small margin activates useful gradients even when the head
+                # output range is clipped to [v_min, v_max].
+                v_low = v_min + voltage_margin
+                v_high = v_max - voltage_margin
+                v_viol = F.relu(v_low - v_pred) + F.relu(v_pred - v_high)
                 # For infeasible samples, encourage violation prediction;
                 # for feasible samples, enforce constraint satisfaction
                 feasible_mask = y_batch > 0.5
@@ -277,21 +289,43 @@ def train_ssr_dl(
             # 3. Contrastive boundary loss
             loss_contrastive = lambda_contrastive * contrastive_loss(logits, y_batch)
 
+            # 4. Domain-guard hinge loss: points below known lower active-power
+            # bounds should not be predicted secure.
+            loss_domain_guard = torch.tensor(0.0, device=device)
+            if lb is not None:
+                below = (X_batch < lb).any(dim=1)
+                if below.any():
+                    probs = torch.sigmoid(logits[below])
+                    loss_domain_guard = lambda_domain_guard * probs.mean()
+
             # Total loss
-            loss = loss_focal + lambda_physics * loss_physics + loss_contrastive
+            loss = loss_focal + lambda_physics * loss_physics + loss_contrastive + loss_domain_guard
 
             optimizer.zero_grad()
             dual_optimizer.zero_grad()
             loss.backward()
+
+            # Dual ascent: lambda terms should increase when constraints are violated.
+            # Optimizers perform descent by default, so reverse dual gradients.
+            for p in dual_params:
+                if p.grad is not None:
+                    p.grad.mul_(-1.0)
+
             torch.nn.utils.clip_grad_norm_(primal_params, max_norm=1.0)
             optimizer.step()
 
             # Dual ascent (maximize constraint penalties)
             dual_optimizer.step()
 
+            # Keep dual variables in a numerically stable range.
+            with torch.no_grad():
+                model.log_lambda_v.clamp_(-6.0, 6.0)
+                model.log_lambda_l.clamp_(-6.0, 6.0)
+
             epoch_losses['focal'].append(loss_focal.item())
             epoch_losses['physics'].append(loss_physics.item() if isinstance(loss_physics, torch.Tensor) else 0.0)
             epoch_losses['contrastive'].append(loss_contrastive.item())
+            epoch_losses.setdefault('domain_guard', []).append(loss_domain_guard.item())
             epoch_losses['total'].append(loss.item())
 
         # Validation
@@ -318,6 +352,7 @@ def train_ssr_dl(
         history['loss_focal'].append(np.mean(epoch_losses['focal']))
         history['loss_physics'].append(np.mean(epoch_losses['physics']))
         history['loss_contrastive'].append(np.mean(epoch_losses['contrastive']))
+        history['loss_domain_guard'].append(np.mean(epoch_losses.get('domain_guard', [0.0])))
         history['lambda_v'].append(lambda_v.item())
         history['lambda_l'].append(lambda_l.item())
 
@@ -352,7 +387,7 @@ def evaluate_model(
     with torch.no_grad():
         for X_batch, y_batch in test_loader:
             X_batch = X_batch.to(device)
-            if isinstance(model, (PhysicsNN, SSR_DL)):
+            if isinstance(model, (PhysicsNN, SSR_PDNet)):
                 logits, _ = model(X_batch)
             else:
                 logits = model(X_batch)

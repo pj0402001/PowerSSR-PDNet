@@ -1,5 +1,5 @@
 """
-Quick smoke test and demo visualization for the SSR-DL framework.
+Quick smoke test and demo visualization for the SSR-PDNet framework.
 Runs a fast experiment on IEEE 9-bus for verifying the pipeline works.
 """
 
@@ -16,8 +16,8 @@ from pathlib import Path
 import time
 
 from power_system import generate_security_region_data, get_test_network, get_network_info
-from models import BaselineNN, PhysicsNN, SSR_DL
-from trainer import make_data_loaders, train_baseline, train_ssr_dl, evaluate_model
+from models import BaselineNN, PhysicsNN, SSR_PDNet
+from trainer import make_data_loaders, train_baseline, train_ssr_pdnet, evaluate_model
 from visualization import (plot_security_region_2d, plot_training_curves,
                            plot_roc_pr_curves, plot_comparison_bar, plot_confusion_matrix)
 
@@ -91,21 +91,21 @@ def run_demo(case: str = 'case9', n_samples: int = 2000, epochs: int = 100):
     test_results['Physics-NN'] = evaluate_model(phys_nn, test_loader, DEVICE)
     print(f"  Physics-NN: acc={test_results['Physics-NN']['acc']:.4f}, f1={test_results['Physics-NN']['f1']:.4f}")
 
-    # C) SSR-DL (proposed)
-    print("  Training SSR-DL (proposed)...")
-    ssr = SSR_DL(
+    # C) SSR-PDNet (proposed)
+    print("  Training SSR-PDNet (proposed)...")
+    ssr = SSR_PDNet(
         input_dim=input_dim, feature_dim=128,
         classifier_dims=[256, 256, 128], physics_dims=[128, 64],
         n_bus=n_bus, dropout=0.1, use_physics_head=True
     )
-    histories['SSR-DL'] = train_ssr_dl(
+    histories['SSR-PDNet'] = train_ssr_pdnet(
         ssr, train_loader, val_loader,
         epochs=int(epochs * 1.2), lr=1e-3, lr_dual=1e-2,
         lambda_physics=0.1, lambda_contrastive=0.05,
         patience=30, device=DEVICE,
     )
-    test_results['SSR-DL'] = evaluate_model(ssr, test_loader, DEVICE)
-    print(f"  SSR-DL: acc={test_results['SSR-DL']['acc']:.4f}, f1={test_results['SSR-DL']['f1']:.4f}")
+    test_results['SSR-PDNet'] = evaluate_model(ssr, test_loader, DEVICE)
+    print(f"  SSR-PDNet: acc={test_results['SSR-PDNet']['acc']:.4f}, f1={test_results['SSR-PDNet']['f1']:.4f}")
 
     # ─── Visualizations ───────────────────────────
     print("\n[4] Generating visualizations...")
@@ -126,7 +126,7 @@ def run_demo(case: str = 'case9', n_samples: int = 2000, epochs: int = 100):
     plot_confusion_matrix(test_results, save_path=str(FIG_DIR / f'{case}_confusion.png'))
     print(f"  Saved: {FIG_DIR}/{case}_confusion.png")
 
-    # 2D Security Region (SSR-DL)
+    # 2D Security Region (SSR-PDNet)
     X_g_t = torch.FloatTensor(X_g).to(DEVICE)
     ssr.eval()
     with torch.no_grad():
@@ -157,8 +157,8 @@ def run_demo(case: str = 'case9', n_samples: int = 2000, epochs: int = 100):
               f"{res['prec']:8.4f} {res['rec']:8.4f} {res['spec']:8.4f}")
 
     # Save model weights
-    torch.save(ssr.state_dict(), SAVE_DIR / f'{case}_ssr_dl.pth')
-    print(f"\nSSR-DL model saved: {SAVE_DIR}/{case}_ssr_dl.pth")
+    torch.save(ssr.state_dict(), SAVE_DIR / f'{case}_ssr_pdnet.pth')
+    print(f"\nSSR-PDNet model saved: {SAVE_DIR}/{case}_ssr_pdnet.pth")
 
     return test_results, histories
 

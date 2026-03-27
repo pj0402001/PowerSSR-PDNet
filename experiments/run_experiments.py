@@ -2,7 +2,7 @@
 Main experiment script for power system static security region characterization.
 Runs the complete pipeline:
 1. Data generation for multiple IEEE test cases
-2. Model training (Baseline, PhysicsNN, SSR-DL)
+2. Model training (Baseline, PhysicsNN, SSR-PDNet)
 3. Evaluation and comparison
 4. Visualization of security regions
 """
@@ -18,8 +18,8 @@ import time
 from pathlib import Path
 
 from power_system import generate_security_region_data, get_test_network, get_network_info
-from models import BaselineNN, PhysicsNN, SSR_DL
-from trainer import (make_data_loaders, train_baseline, train_ssr_dl,
+from models import BaselineNN, PhysicsNN, SSR_PDNet
+from trainer import (make_data_loaders, train_baseline, train_ssr_pdnet,
                      evaluate_model)
 from visualization import (plot_security_region_2d, plot_training_curves,
                            plot_roc_pr_curves, plot_comparison_bar,
@@ -135,9 +135,9 @@ def run_case(case: str):
     )
     print(f"  Training time: {time.time()-t0:.1f}s")
 
-    # Model 3: SSR-DL (proposed)
-    print("\n  [C] Training SSR-DL (proposed)...")
-    ssr_model = SSR_DL(
+    # Model 3: SSR-PDNet (proposed)
+    print("\n  [C] Training SSR-PDNet (proposed)...")
+    ssr_model = SSR_PDNet(
         input_dim=input_dim,
         feature_dim=256,
         classifier_dims=[512, 512, 256, 128],
@@ -146,9 +146,9 @@ def run_case(case: str):
         dropout=0.1,
         use_physics_head=True,
     )
-    print(f"  SSR-DL parameters: {sum(p.numel() for p in ssr_model.parameters()):,}")
+    print(f"  SSR-PDNet parameters: {sum(p.numel() for p in ssr_model.parameters()):,}")
     t0 = time.time()
-    histories['SSR-DL'] = train_ssr_dl(
+    histories['SSR-PDNet'] = train_ssr_pdnet(
         ssr_model, train_loader, val_loader,
         epochs=EPOCHS_SSR,
         lr=1e-3,
@@ -166,7 +166,7 @@ def run_case(case: str):
     models = {
         'Baseline': baseline,
         'Physics-NN': physics_nn,
-        'SSR-DL': ssr_model,
+        'SSR-PDNet': ssr_model,
     }
 
     for name, model in models.items():

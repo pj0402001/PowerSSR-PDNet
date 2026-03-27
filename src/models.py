@@ -4,7 +4,7 @@ Deep learning models for power system static security region characterization.
 Three architectures are implemented:
 1. BaselineNN: Standard feedforward classifier
 2. PhysicsNN: Physics-informed NN with constraint violation penalty
-3. SSR_DL: Full model — Static Security Region Deep Learning (our proposed method)
+3. SSR_PDNet: Full model — Static Security Region Deep Learning (our proposed method)
    - Uses equation-embedding style hard constraints
    - Lagrange dual training for soft inequality constraints
    - Adversarial boundary sampling for accurate decision boundary
@@ -92,9 +92,9 @@ class BoundaryRegularization(nn.Module):
         return self.weight * grad.norm(dim=-1).mean()
 
 
-class SSR_DL(nn.Module):
+class SSR_PDNet(nn.Module):
     """
-    Static Security Region Deep Learning (SSR-DL) — our proposed model.
+    Static Security Region Deep Learning (SSR-PDNet) — our proposed model.
 
     Key innovations:
     1. Dual-branch architecture: shared feature extractor + separate boundary branch
@@ -203,8 +203,8 @@ class SSR_DL(nn.Module):
         v_pred = None
         if self.use_physics_head:
             v_raw = self.physics_head(z)
-            # Constrain predicted voltages to [0.8, 1.2] p.u.
-            v_pred = 0.9 + 0.3 * torch.sigmoid(v_raw)
+            # Constrain predicted voltages to [0.9, 1.1] p.u.
+            v_pred = 0.9 + 0.2 * torch.sigmoid(v_raw)
 
         return logit, v_pred
 
@@ -265,7 +265,7 @@ class PhysicsNN(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         feat = self.backbone(x)
         logit = self.classifier(feat).squeeze(-1)
-        v_pred = 0.8 + 0.4 * self.v_predictor(feat)  # [0.8, 1.2] p.u.
+        v_pred = 0.9 + 0.2 * self.v_predictor(feat)  # [0.9, 1.1] p.u.
         return logit, v_pred
 
 

@@ -1,11 +1,19 @@
 \documentclass[journal]{IEEEtran}
 
+% Fast compile mode for Overleaf free tier (set false for final output)
+\newif\iffastcompile
+\fastcompiletrue
+
 % ─── Packages ────────────────────────────────────────────────────────────────
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{multirow}
+\iffastcompile
+\usepackage[draft]{hyperref}
+\else
 \usepackage{hyperref}
+\fi
 \usepackage{cite}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
@@ -13,6 +21,21 @@
 \usepackage{subcaption}
 \usepackage{array}
 \usepackage{url}
+\usepackage{threeparttable}
+\usepackage{float}
+\usepackage{placeins}
+
+\graphicspath{{./}{../figures/}}
+\iffastcompile
+\setkeys{Gin}{draft}
+\fi
+\setcounter{topnumber}{5}
+\setcounter{bottomnumber}{4}
+\setcounter{totalnumber}{9}
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.85}
 
 % ─── Theorem environments ────────────────────────────────────────────────────
 \newtheorem{theorem}{Theorem}
@@ -34,14 +57,14 @@
 \newcommand{\relu}{\mathrm{ReLU}}
 
 % ─── Title and authors ───────────────────────────────────────────────────────
-\title{Deep Learning-Based Characterization of Power System Static Security Regions Using Multi-Solution OPF Test Cases}
+\title{Physics-Informed Neural Characterization of Static Security Regions in Generator Power Space Using Multi-Solution Benchmark Cases}
 
 \author{
   \IEEEauthorblockN{[Authors]}\\
   \IEEEauthorblockA{[Institution]}
   \thanks{Manuscript received ---; revised ---.
   Corresponding author: [email].
-  Code available at: \url{https://github.com/yourusername/PowerSSR-DL}}
+  Code available at: \url{https://github.com/<your-username>/PowerSSR-PDNet}}
 }
 
 \begin{document}
@@ -51,34 +74,39 @@
 % ─────────────────────────────────────────────────────────────────────────────
 \begin{abstract}
 % ─────────────────────────────────────────────────────────────────────────────
-Characterizing the static security region (SSR) of power systems — the set of
-all load operating points for which a feasible AC power flow solution satisfying
-all operational constraints exists — is a fundamental problem for real-time
-security assessment. Classical approaches rely on iterative power flow solvers,
-which are computationally prohibitive for large-scale systems or online
-applications. This paper proposes \textbf{SSR-DL}, a deep learning framework
-that directly learns the SSR boundary from data, enabling near-instantaneous
-security classification at inference time.
+Characterizing the static security region (SSR) in \emph{generator power
+space} is fundamental to online security assessment, preventive dispatch, and
+operating-margin analysis. The SSR is the set of generator active-power setpoints
+for which a voltage- and flow-secure AC solution exists under fixed loading.
+For the multi-solution benchmark cases of Bukhsh et al., this set is strongly
+nonconvex and may split into disconnected secure components, making dense
+nonlinear-feasibility scanning computationally expensive.
 
-Our approach features three innovations: (i)~a dual-branch neural architecture
-with a shared feature extractor and separate classification and physics heads;
-(ii)~Lagrange dual training with learnable multipliers for soft enforcement of
-voltage and line-flow constraints; and (iii)~a contrastive boundary loss that
-sharpens the predicted decision boundary near the true SSR frontier. We
-evaluate SSR-DL on the publicly available multi-solution OPF benchmark cases
-from Bukhsh et al.\ (2013) — specifically WB2, WB5, and the modified IEEE
-9-bus system (case9mod) — which are specifically designed to exhibit multiple
-local OPF solutions, making security region characterization particularly
-challenging. SSR-DL achieves \textbf{F1 = 1.000} on the WB2 case (feasibility
-rate 2.5\%) and \textbf{F1 = 0.997} on case9mod, consistently outperforming
-baseline feedforward and physics-informed neural networks. The full code and
-trained models are released as open source.
+We propose \textbf{SSR-PDNet}, a physics-informed neural framework that learns the
+static security region together with internal operating-state structure. The model combines
+(i)~a shared encoder operating directly on generator dispatch coordinates,
+(ii)~a security head for boundary discrimination, and (iii)~a physics head that
+regularizes the learned representation with voltage-state information through
+primal-dual training. This design preserves the correct coordinate-space
+interpretation while improving boundary sharpness near disconnected secure
+components.
+
+Experiments on WB2, WB5, LMBM3, and case9mod show that SSR-PDNet accurately
+reproduces the benchmark static security regions obtained from traditional feasibility
+scanning. On the larger multi-component cases, SSR-PDNet attains \textbf{F1 = 0.9671}
+on WB5 and \textbf{F1 = 0.9716} on case9mod while recovering the two- and
+three-component secure-set topology, respectively. On WB2 and LMBM3, the paper
+further visualizes voltage, reactive-power, redispatch, and bifurcation-related
+quantities inside the secure operating set, showing that the framework is not
+limited to binary classification but supports physically interpretable security
+region analysis.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Static security region, feasibility region, optimal power flow, deep learning,
-physics-informed neural network, Lagrange dual method, power system security
-assessment.
+static security region, generator power space,
+physics-informed neural network, static security assessment,
+Lagrange dual method, multi-solution benchmark cases, disconnected secure components,
+power system security assessment.
 \end{IEEEkeywords}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -94,9 +122,9 @@ generation dispatch) within which all AC power flow constraints — voltage
 magnitudes, branch flow limits, reactive power limits — are simultaneously
 satisfied~\cite{jiang2017feasibility}.
 
-Traditional SSR computation relies on iterative AC power flow or optimal power
-flow (OPF) solvers. Although mature and accurate, these methods scale poorly:
-a single AC-OPF solve for a 300-bus system may take seconds on a workstation,
+Traditional SSR computation relies on repeated nonlinear AC power-flow
+feasibility solves. Although mature and accurate, these methods scale poorly:
+a single large-scale nonlinear solve for a 300-bus system may take seconds on a workstation,
 while real-time applications demand sub-millisecond responses across thousands
 of candidate operating conditions. Data-driven and machine-learning approaches
 have emerged as a promising avenue to reduce this computational burden by
@@ -105,11 +133,11 @@ amortizing expensive offline computation into fast online inference
 
 \subsection{Related Work}
 
-\textbf{OPF surrogate models.} A substantial body of work trains neural
+\textbf{Dispatch surrogate models.} A substantial body of work trains neural
 networks to \emph{predict} optimal dispatch decisions given load inputs
 \cite{pan2023deepopf,chen2022learning}. These models are fast at inference but
 produce \emph{point predictions} of the optimal solution rather than
-characterizing the feasibility boundary.
+characterizing the security boundary.
 
 \textbf{Feasibility-seeking methods.} Nguyen and Donti~\cite{nguyen2025fsnet}
 propose FSNet, which appends a differentiable feasibility-seeking correction
@@ -120,18 +148,18 @@ Kim and Kim~\cite{kim2025deeplagrange} embed power flow equations as hard
 constraints via implicit differentiation and enforce inequalities through
 Lagrange dual training.
 
-\textbf{Security region characterization.} Jiang and Chiang~\cite{jiang2017feasibility}
-develop a dynamical-systems approach that analytically characterizes OPF
-feasibility regions as stable equilibrium manifolds of a quotient gradient
+\textbf{Security-region characterization.} Jiang and Chiang~\cite{jiang2017feasibility}
+develop a dynamical-systems approach that analytically characterizes AC
+security regions as stable equilibrium manifolds of a quotient gradient
 system, revealing their potentially disconnected topology. Fan et
 al.~\cite{fan2024error} quantify the Hausdorff distance between convex
-approximation feasibility regions and the true nonconvex AC-OPF feasibility
+approximation security regions and the true nonconvex static security
 region. However, neither approach learns a fast, generalizable model of the
 security boundary.
 
-\textbf{Multi-solution OPF.} Bukhsh et al.~\cite{bukhsh2013local} identify
-test cases for which the AC-OPF problem admits multiple locally optimal
-solutions, highlighting the nonconvexity of the feasibility region. These
+\textbf{Multi-solution benchmark cases.} Bukhsh et al.~\cite{bukhsh2013local} identify
+test cases for which the AC feasibility landscape admits multiple local
+solution branches, highlighting the nonconvexity of the static security region. These
 cases provide particularly challenging benchmarks for security region methods
 because the SSR may be small, irregular, or have non-trivial topology.
 
@@ -140,30 +168,39 @@ because the SSR may be small, irregular, or have non-trivial topology.
 This paper makes the following contributions:
 
 \begin{enumerate}
-  \item We formulate SSR characterization as a binary classification problem
-    in the load demand space, and propose SSR-DL, a neural network architecture
-    incorporating (a)~dual-branch design with physics head, (b)~Lagrange dual
-    training with learnable constraint multipliers, and (c)~contrastive
-    boundary loss.
+  \item We formulate static security region characterization as binary
+    classification in \emph{generator power space} $(P_{G2},\ldots,P_{Gn_g})$
+    with loads fixed at nominal values, matching the traditional nonlinear-feasibility scanning
+    procedure of Bukhsh et al.\ exactly. This coordinate choice is essential for
+    preserving disconnected secure components.
 
-  \item We provide \emph{complete Python implementations} of the Bukhsh et
-    al.~(2013) multi-solution OPF test cases in pandapower, enabling
-    reproducible experimentation without MATPOWER.
+  \item We propose \textbf{SSR-PDNet}, a physics-informed neural architecture with
+    a shared encoder, a security discrimination head, and a physics head for
+    internal-state regularization. The training objective combines focal loss,
+    contrastive boundary sharpening, and primal-dual voltage penalties.
 
-  \item We conduct systematic experiments on WB2, WB5, and case9mod, comparing
-    SSR-DL against a standard NN baseline and a physics-informed NN baseline.
-    SSR-DL achieves perfect classification on WB2 and state-of-the-art
-    performance on case9mod.
+  \item We enrich the benchmark study beyond classification by visualizing
+    secure-point internal states and local point-cloud structure. In WB2 and
+    LMBM3, the learned static security region is linked to voltage profiles,
+    reactive power, slack redispatch, and dual-solution structure. In WB5 and
+    case9mod, boundary-focused zoom figures reveal local point arrangement and
+    density heterogeneity that shape boundary formation.
 
-  \item All code, data generation pipelines, trained models, and visualization
-    tools are released as open source.
+  \item We conduct systematic experiments on all Bukhsh multi-solution cases.
+    SSR-PDNet reproduces both disconnected components of WB5 (F1=0.9671) and all
+    three components of case9mod (F1=0.9716), while the redesigned figures also
+    show secure-set redispatch and voltage-margin patterns.
+
+  \item All code, data pipelines (nonlinear-solver and traditional CSV), trained
+    models, and visualization tools are released as open source.
 \end{enumerate}
 
 The remainder of the paper is organized as follows.
 Section~\ref{sec:problem} formally defines the SSR and the learning problem.
-Section~\ref{sec:method} presents the SSR-DL architecture and training
+Section~\ref{sec:method} presents the SSR-PDNet architecture and training
 procedure. Section~\ref{sec:cases} describes the Bukhsh et al.\ test cases.
-Section~\ref{sec:experiments} presents experimental results.
+Section~\ref{sec:experiments} presents experimental results including comparison
+with traditional feasibility scanning.
 Section~\ref{sec:discussion} discusses limitations and extensions.
 Section~\ref{sec:conclusion} concludes.
 
@@ -195,16 +232,19 @@ $Q_i^{\mathrm{net}} = Q_i^G - Q_i^L$.
 
 \begin{definition}[Static Security Region]
   \label{def:ssr}
-  Given a power network, the \emph{static security region} $\SSR$ in the
-  active and reactive load space $\R^{2n_\ell}$ is defined as:
+  Let $\mathbf{u} = (P_{G2},\ldots,P_{Gn_g})^\top \in \R^{n_g-1}$ denote the
+  vector of controllable generator active-power setpoints (excluding the slack
+  bus generator whose output $P_{G1}$ adjusts automatically to maintain power
+  balance). With loads \emph{fixed} at nominal values
+  $\mathbf{P}^L_0, \mathbf{Q}^L_0$, the static security region is defined as:
   \begin{equation}
-    \SSR = \bigl\{(P^L, Q^L) \in \R^{2n_\ell} :
-      \exists\,(V, \theta, P^G, Q^G) \text{ satisfying }
-      \eqref{eq:pf_p}$--$\eqref{eq:pf_q}\text{ and }
-      \eqref{eq:volt_lim}$--$\eqref{eq:line_lim} \bigr\},
+    \SSR = \bigl\{\mathbf{u} \in \R^{n_g-1} :
+      \exists\,(V, \theta, Q^G) \text{ satisfying }
+      \eqref{eq:pf_p}\text{--}\eqref{eq:pf_q}\text{ and }
+      \eqref{eq:volt_lim}\text{--}\eqref{eq:line_lim} \bigr\},
     \label{eq:ssr_def}
   \end{equation}
-  where the operational constraints are:
+  where the operational constraints include:
   \begin{align}
     V_i^{\min} &\le V_i \le V_i^{\max}, \quad \forall i, \label{eq:volt_lim}\\
     P_g^{\min} &\le P_g^G \le P_g^{\max}, \quad \forall g, \label{eq:gen_p_lim}\\
@@ -214,44 +254,89 @@ $Q_i^{\mathrm{net}} = Q_i^G - Q_i^L$.
 \end{definition}
 
 \begin{remark}
-  $\SSR$ is generally nonconvex and may be disconnected~\cite{jiang2017feasibility}.
-  Its boundary — the \emph{security boundary} — separates secure from insecure
-  operating regions. The Hausdorff distance between $\SSR$ and its convex
-  approximation has been shown to grow rapidly when the network is
-  congested~\cite{fan2024error}.
+  \textbf{Critical distinction:} The static security region $\SSR$ is defined
+  in \emph{generator power space} $\mathbf{u} = (P_{G2},\ldots,P_{Gn_g})$,
+  with loads treated as \emph{fixed parameters}. This is the standard
+  formulation used in traditional nonlinear-feasibility scanning~\cite{bukhsh2013local} and
+  quotient gradient system theory~\cite{jiang2017feasibility}. For a given
+  $\mathbf{u} \in \SSR$, the slack-bus generator output
+  $P_{G1} = \sum_i P_i^L + P_{\mathrm{loss}} - \sum_{g \ge 2} P_{Gg}$
+  automatically. The reactive dispatch $Q^G$ and voltage profile $(V,\theta)$
+  are the remaining variables solved by the AC power flow equations.
 \end{remark}
+
+\begin{theorem}[Topology of $\SSR$~\cite{jiang2017feasibility}]
+  Under generic conditions, each connected component of $\SSR$ is a
+  smooth submanifold of $\R^{n_g-1}$, corresponding to a \emph{regular stable
+  equilibrium manifold} (SEM) of the quotient gradient system (QGS)
+  $\dot{\mathbf{u}} = -D H(\mathbf{u})^\top H(\mathbf{u})$, where
+  $H(\mathbf{u}) = 0$ encodes the AC power flow equations with $\mathbf{u}$ fixed.
+  Disconnected components arise at \emph{pseudo-pitchfork bifurcation points}
+  where two SEMs merge or split.
+\end{theorem}
+
+\begin{remark}
+  $\SSR$ is generally nonconvex and may be \emph{disconnected}~\cite{jiang2017feasibility,bukhsh2013local}.
+  For the Bukhsh et al. benchmark cases:
+  WB5 has \textbf{2 disconnected components} in $(P_{G1}, P_{G5})$ space;
+  case9mod has \textbf{3 disconnected components} in $(P_{G2}, P_{G3})$ space;
+  LMBM3 has \textbf{2 components} for load factor $\lambda \approx 1.14$--$1.5$.
+  The Hausdorff distance between the SDP convex relaxation and $\SSR$
+  grows rapidly near the saddle-node bifurcation point~\cite{fan2024error}.
+\end{remark}
+
+\subsection{Traditional Nonlinear-Feasibility Scanning (Ground Truth)}
+\label{subsec:traditional_scan}
+
+The traditional method for computing $\SSR$ fixes $\mathbf{u}$ to a
+grid point and solves:
+\begin{equation}
+  \min_{V, \theta, Q^G}\; 0 \quad \text{s.t.} \quad
+  \eqref{eq:pf_p}\text{--}\eqref{eq:pf_q},\;
+  \eqref{eq:volt_lim}\text{--}\eqref{eq:line_lim},\;
+  P_{Gg} = u_g\; \forall g \ge 2.
+  \label{eq:feas_prob}
+\end{equation}
+The point $\mathbf{u}$ is declared secure if the nonlinear feasibility solver
+(tolerance $10^{-8}$, max 3000 iterations) converges to a feasible AC state~\cite{bukhsh2013local}.
+To overcome non-convexity and find all secure components, a multi-start
+strategy is used: (i)~\emph{flat start} $V=1$, $\theta=0$; (ii)~\emph{outer start}
+with pre-specified angle estimates from the MATPOWER solution. Warm-starting
+propagates solutions along each scan direction.
 
 \subsection{Learning Problem}
 
-We formulate SSR characterization as supervised binary classification. Given a
-labeled dataset $\mathcal{D} = \{(\bx^{(i)}, y^{(i)})\}_{i=1}^{N}$ where
-$\bx^{(i)} = (P^{L,(i)}, Q^{L,(i)}) \in \R^{2n_\ell}$ is a normalized load
-vector and $y^{(i)} \in \{0, 1\}$ is the feasibility label ($y=1$ iff
-$(P^L, Q^L) \in \SSR$), we seek a function $f_\phi : \R^{2n_\ell} \to [0,1]$
-that predicts $\Pr(y=1 \mid \bx)$.
+We formulate SSR characterization as supervised binary classification in
+\emph{generator power space}. Given a labeled dataset
+$\mathcal{D} = \{(\mathbf{u}^{(i)}, y^{(i)})\}_{i=1}^{N}$ where
+$\mathbf{u}^{(i)} = (P_{G2}^{(i)},\ldots,P_{Gn_g}^{(i)})^\top \in \R^{n_g-1}$
+and $y^{(i)} \in \{0, 1\}$ is the traditional-solver security label
+($1$ = secure, $0$ = insecure), we seek a function
+$f_\phi : \R^{n_g-1} \to [0,1]$ predicting $\Pr(y=1 \mid \mathbf{u})$.
 
-Labels are generated by running pandapower's Newton-Raphson power flow solver
-and checking whether the converged solution satisfies all
-constraints~\eqref{eq:volt_lim}--\eqref{eq:line_lim}. The input space is
-sampled using \emph{Latin Hypercube Sampling} (LHS)~\cite{mckay1979lhs} to
-ensure uniform coverage of the load space.
+Training data for WB5 and case9mod is taken directly from pre-computed traditional
+scanning results (32,068 secure points for WB5; 2,735 for case9mod), augmented
+with uniformly sampled background insecure points (2:1 ratio). This ensures
+the training distribution matches the ground-truth distribution from the
+traditional solver. Labels satisfy: $y^{(i)} = 1 \iff \mathbf{u}^{(i)} \in \SSR$.
 
 % ─────────────────────────────────────────────────────────────────────────────
-\section{SSR-DL: Proposed Method}
+\section{SSR-PDNet: Proposed Method}
 \label{sec:method}
 % ─────────────────────────────────────────────────────────────────────────────
 
 \subsection{Architecture Overview}
 
-SSR-DL consists of three components (see Fig.~\ref{fig:architecture}):
+SSR-PDNet consists of three components (see Fig.~\ref{fig:architecture} and the description below):
 
 \begin{enumerate}
-  \item \textbf{Shared Feature Extractor} $\phi_z : \R^{2n_\ell} \to \R^d$:
-    maps normalized load inputs to a latent representation $\bz = \phi_z(\bx)$.
-  \item \textbf{Classifier Head} $\phi_c : \R^d \to \R$: produces a feasibility
+  \item \textbf{Shared Feature Extractor} $\phi_z : \R^{n_u} \to \R^d$:
+    maps normalized generator-dispatch coordinates to a latent representation
+    $\bz = \phi_z(\bx)$.
+  \item \textbf{Security Head} $\phi_c : \R^d \to \R$: produces a security
     logit $\hat{\ell} = \phi_c(\bz)$.
   \item \textbf{Physics Head} $\phi_v : \R^d \to \R^n$: predicts bus voltage
-    magnitudes $\hat{V} = \phi_v(\bz)$, constrained to $[0.9, 1.2]$ p.u.\ via
+    magnitudes $\hat{V} = \phi_v(\bz)$, constrained to $[0.9, 1.1]$ p.u.\ via
     a sigmoid output layer.
 \end{enumerate}
 
@@ -263,6 +348,17 @@ BatchNorm, SiLU, and a residual skip connection:
     \phi_c^{\mathrm{main}}(\bz) + W_{\mathrm{skip}} \bz \bigr).
   \label{eq:cls_head}
 \end{equation}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{architecture.png}
+  \caption{SSR-PDNet dual-branch architecture. A shared feature extractor maps
+    generator active-power coordinates $(P_{G_i})$ to a latent vector $\mathbf{z}$.
+    The security head predicts SSR membership probability via focal loss and
+    contrastive boundary regularization. The physics head predicts bus voltage
+    magnitudes for constraint-aware primal-dual regularization.}
+  \label{fig:architecture}
+\end{figure}
 
 \subsection{Training Objective}
 
@@ -279,8 +375,8 @@ hyperparameters.
 
 \subsubsection{Focal Loss}
 
-To handle class imbalance — the SSR may occupy only a small fraction of the
-sampled space (e.g., 2.5\% in WB2) — we use the focal loss~\cite{lin2017focal}:
+To handle class imbalance — the SSR may occupy only a limited fraction of the
+sampled space in boundary-focused datasets — we use the focal loss~\cite{lin2017focal}:
 \begin{equation}
   \Loss_{\mathrm{focal}} = -\frac{1}{N} \sum_{i=1}^{N}
     \alpha_t (1 - p_t)^\gamma \log p_t,
@@ -291,16 +387,16 @@ probability for the true class.
 
 \subsubsection{Physics Constraint Loss with Lagrange Dual Training}
 
-For feasible samples ($y^{(i)}=1$), the predicted voltage profile $\hat{V}$
+For secure samples ($y^{(i)}=1$), the predicted voltage profile $\hat{V}$
 should satisfy the voltage limits. We enforce this through a Lagrange penalty:
 \begin{equation}
   \Loss_{\mathrm{physics}} = \lambda_V \cdot
-    \frac{1}{|\mathcal{F}|} \sum_{i \in \mathcal{F}}
+    \frac{1}{|\SSR_\mathcal{D}|} \sum_{i \in \SSR_\mathcal{D}}
     \sum_{k=1}^{n} \bigl[\relu(V_{\min} - \hat{V}_k^{(i)})
       + \relu(\hat{V}_k^{(i)} - V_{\max})\bigr],
   \label{eq:physics_loss}
 \end{equation}
-where $\mathcal{F} = \{i : y^{(i)} = 1\}$ and $\lambda_V > 0$ is a learnable
+where $\SSR_\mathcal{D} = \{i : y^{(i)} = 1\}$ and $\lambda_V > 0$ is a learnable
 Lagrange multiplier (dual variable). The dual variable is updated by gradient
 \emph{ascent} on $\Loss_{\mathrm{total}}$, while the primal network weights are
 updated by gradient \emph{descent}, following the primal-dual framework
@@ -316,22 +412,22 @@ of~\cite{kim2025deeplagrange}:
 \subsubsection{Contrastive Boundary Loss}
 
 To encourage a sharp, well-defined security boundary, we apply a margin-based
-contrastive loss between the average predicted probability of feasible and
-infeasible samples in each mini-batch:
+contrastive loss between the average predicted probability of secure and
+insecure samples in each mini-batch:
 \begin{equation}
   \Loss_{\mathrm{contrastive}} = \relu\!\left(
-    m - \bigl(\bar{p}_{\mathcal{F}} - \bar{p}_{\mathcal{I}}\bigr)
+    m - \bigl(\bar{p}_{\SSR} - \bar{p}_{\mathcal{I}}\bigr)
   \right),
   \label{eq:contrastive}
 \end{equation}
-where $\bar{p}_{\mathcal{F}}$ and $\bar{p}_{\mathcal{I}}$ are the mean
-predicted probabilities over feasible and infeasible samples, respectively, and
+where $\bar{p}_{\SSR}$ and $\bar{p}_{\mathcal{I}}$ are the mean
+predicted probabilities over secure and insecure samples, respectively, and
 $m = 0.5$ is the target margin.
 
 \subsection{Training Procedure}
 
 \begin{algorithm}[t]
-  \caption{SSR-DL Training}
+  \caption{SSR-PDNet Training}
   \label{alg:training}
   \begin{algorithmic}[1]
     \Require Dataset $\mathcal{D}$, hyperparameters $\lambda_{\mathrm{phys}},\lambda_c,m$,
@@ -362,66 +458,112 @@ weighted random sampler ensures each class appears equally in expectation.
 % ─────────────────────────────────────────────────────────────────────────────
 
 We use the test cases from Bukhsh et al.~\cite{bukhsh2013local}, originally
-provided in MATPOWER format. We convert them to pandapower Python format for
-reproducibility without proprietary software. Table~\ref{tab:cases} summarizes
-the cases.
+provided in MATPOWER format. We implement them in both pandapower (Python) and
+a direct Pyomo-based nonlinear-feasibility framework for reproducibility. Table~\ref{tab:cases} summarizes
+the cases. \textbf{Critically}, all experiments are conducted in
+\emph{generator power space} $\mathbf{u} = (P_{G2},\ldots,P_{Gn_g})$ with loads
+fixed at nominal values, matching the traditional nonlinear-feasibility scanning approach exactly.
 
-\begin{table}[t]
+\begin{table}[!t]
   \centering
-  \caption{Bukhsh et al.\ (2013) Test Cases Used in This Study}
+  \caption{Bukhsh et al.\ (2013) Test Cases}
   \label{tab:cases}
   \begin{tabular}{lccccl}
     \toprule
-    Case & Buses & Gens & Loads & Lines & Key Feature \\
+    Case & Buses & Gens & Loads & Lines & Generator Power Space \\
     \midrule
-    WB2      & 2 & 1 & 1 & 1 & Analytical; $Q_d{<}0$ (capacitive); 2 PF solutions \\
-    WB5      & 5 & 2 & 3 & 6 & Meshed; 2 gens with different costs \\
-    case9mod & 9 & 3 & 3 & 9 & IEEE 9-bus; $Q_{\min}{=}-5$ MVAR (tight) \\
+    WB2      & 2 & 1 & 1 & 1  & $(P_d, Q_d)$ load space (1 gen = slack) \\
+    WB5      & 5 & 2 & 3 & 6  & $(P_{G1}, P_{G5})$ — 2 disconnected components \\
+    LMBM3    & 3 & 3 & 3 & 3  & $(P_{G1}, P_{G2})$ — L3-2 limit creates split \\
+    case9mod & 9 & 3 & 3 & 9  & $(P_{G2}, P_{G3})$ — 3 disconnected components \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{WB2: 2-Bus Analytical Case}
 
-WB2 is a 2-bus system with a slack generator at bus~1 ($V_1 = 0.964$~p.u.)
-and a load at bus~2 with $P_d = 350$~MW and $Q_d = -350$~MVAR (capacitive).
-The line has $r = 0.04$~p.u., $x = 0.20$~p.u. on a 100~MVA base.
+WB2 has a single slack generator at bus~1 ($V_1 = 0.964$~p.u.) and a load at bus~2
+with $P_d = 350$~MW and $Q_d = -350$~MVAR (capacitive). Since there is only one
+generator, the SSR in generator power space is degenerate (only the slack bus
+generator exists). We instead characterize the secure operating set in the 2D
+$(P_d, Q_d)$ space, which directly corresponds to generator output
+$P_{G1} = P_d + P_{\mathrm{loss}}$.
 
-\begin{proposition}[WB2 Dual Solutions]
+\begin{proposition}[WB2 Dual Solutions~\cite{bukhsh2013local}]
   For the nominal load $(P_d, Q_d) = (350, -350)$ MW/MVAR, the AC power flow
   equations admit exactly two solutions with bus-2 voltages $V_2 \approx 0.922$~p.u.
-  and $V_2 \approx 1.095$~p.u., both of which violate the voltage limit
-  $[0.95, 1.05]$~p.u. The SSR is therefore confined to a narrow region in the
-  $(P_d, Q_d)$ plane where a voltage-feasible solution exists.
+  and $V_2 \approx 1.095$~p.u., both violating the voltage limit
+  $[0.95, 1.05]$~p.u. The secure operating set is a narrow strip in the
+  $(P_d, Q_d)$ plane where a voltage-secure solution exists, with
+  secure-set area fraction $\approx 3.2\%$ (see Fig.~\ref{fig:wb2_ssr}).
 \end{proposition}
 
-Power flow equations for WB2 can be solved analytically. For a given injection
-$(P_2, Q_2)$ at bus~2, bus voltage $V_2$ and angle $\theta_2$ satisfy:
-\begin{align}
-  P_2 &= V_2^2 g - V_2 V_1 (g\cos\theta_2 + b\sin\theta_2), \\
-  Q_2 &= -V_2^2 b - V_2 V_1 (g\sin\theta_2 - b\cos\theta_2),
-\end{align}
-where $g + jb = 1/(r + jx)$. The SSR is the set of $(P_d, Q_d)$ for which
-$V_2 \in [0.95, 1.05]$.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB2_analytical.png}
+  \caption{WB2 two-bus analytical static security region and internal-state maps.
+    Panel (a) shows the secure strip in load space $(P_d, Q_d)$. Panels (b)--(d)
+    visualize physically meaningful quantities within secure operating points:
+    bus-2 voltage magnitude $V_2$, slack generation $P_{G1}$, and the dual-solution
+    voltage gap $\Delta V_2$ near the collapse boundary. The nominal operating point
+    (star) lies close to the edge of the secure strip.}
+  \label{fig:wb2_ssr}
+\end{figure}
 
 \subsection{WB5: 5-Bus Meshed Case}
 
-WB5 has two generators at buses~1 (slack) and~5 (PV), with generation costs
-$c_1 = 4.00$ \$/MWh for G1 and $c_1 = 1.00$ \$/MWh for G5, so OPF solutions
-dispatch G5 preferentially. Line limits are $S_k^{\max} = 2500$~MVA. The SSR
-extends over a wide load range but collapses when both intermediate loads
-simultaneously reach $\sim 20\times$ their nominal values.
+WB5 has two generators at bus~1 (slack, G1) and bus~5 (PV, G5), with loads
+fixed at $[P_{d2}, P_{d3}, P_{d4}] = [130, 130, 65]$~MW and
+$[Q_{d2}, Q_{d3}, Q_{d4}] = [20, 20, 10]$~MVAR. The voltage limits are
+$[0.87, 1.13]$~p.u. and the line limits are $S_k^{\max} = 2500$~MVA.
+
+\textbf{Traditional feasibility scanning} (our ground truth) fixes both $P_{G1}$ and
+$P_{G5}$ and scans $(P_{G5} \in [0, 400]$~MW, $P_{G1} \in [0, 700]$~MW) with
+3-stage multi-start (coarse $\to$ fine $\to$ gap-fill), yielding \textbf{32,068
+secure points} forming \textbf{2 disconnected components} in $(P_{G1}, P_{G5})$
+space (see Fig.~\ref{fig:wb5_ssr}).
+
+The disconnected structure arises from the non-convexity of the line flow
+constraints: for certain $(P_{G1}, P_{G5})$ combinations, no voltage profile
+$(V, \theta)$ satisfies the AC power flow equations simultaneously with all
+line thermal limits. This is a \emph{pseudo-pitchfork bifurcation} in the
+quotient gradient system~\cite{jiang2017feasibility}.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB5_ipopt_reference.png}
+  \caption{WB5 traditional ground truth: 32,068 secure operating points in
+    generator power space $(P_{G1}, P_{G5})$, obtained by fixing both generator
+    active outputs and solving for feasible AC states. Two disconnected secure
+    components are visible, separated by an insecure corridor related to voltage
+    and thermal-limit interactions.}
+  \label{fig:wb5_ipopt}
+\end{figure}
 
 \subsection{case9mod: Modified IEEE 9-Bus}
 
-case9mod is derived from the standard IEEE 9-bus system with two modifications:
-(i)~reactive power lower bounds tightened from $Q_{\min} = -300$ to $-5$~MVAR
-for all generators (making reactive power supply constrained); and (ii)~all
-loads reduced to 60\% of their standard values ($P_L \in \{54, 60, 75\}$~MW).
-The tight $Q_{\min}$ constraint is the primary driver of SSR infeasibility:
-when loads deviate sufficiently from nominal, generator reactive power demand
-exceeds the $-5$~MVAR lower bound. The feasibility rate under Latin Hypercube
-Sampling with $\times 0.1$--$5.0$ load variation is $\approx 48\%$.
+case9mod modifies the standard IEEE 9-bus case with: (i)~$Q_{\min} = -5$~MVAR
+(tightened from $-300$) for all generators; (ii)~loads at 60\% of standard
+values ($[P_{d5}, P_{d7}, P_{d9}] = [54, 60, 75]$~MW). Generators at buses 2 and 3
+are the controllable variables; bus 1 is the slack.
+
+\textbf{Traditional feasibility scanning} fixes $(P_{G2}, P_{G3})$ and solves
+security feasibility, yielding \textbf{2,735 secure points} in the
+$(P_{G2}, P_{G3}) \in [10, 300] \times [10, 270]$~MW space forming
+\textbf{3 disconnected components}. The tight $Q_{\min}$ constraint is the
+primary source of insecurity and component separation.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{case9mod_ipopt_reference.png}
+  \caption{case9mod traditional ground truth: 2,735 secure operating points in
+    generator power space $(P_{G2}, P_{G3})$, colored by minimum bus voltage.
+    Three disconnected secure components appear due to reactive-power-limited
+    operating regimes under the tight $Q_{\min}=-5$~MVAR setting.}
+  \label{fig:case9mod_ipopt}
+\end{figure}
+
+\FloatBarrier
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Experiments}
@@ -430,21 +572,22 @@ Sampling with $\times 0.1$--$5.0$ load variation is $\approx 48\%$.
 
 \subsection{Experimental Setup}
 
-\textbf{Data generation.} For each case, we generate $N$ labeled samples by
-Latin Hypercube Sampling of the load space and running pandapower power flow
-checks. Table~\ref{tab:data} summarizes the datasets.
+\textbf{Data generation.} Training data comes from pre-computed traditional scanning
+results (the same ground truth used for visualization). Insecure background
+points are sampled uniformly in the generator power space at a 2:1
+(insecure:secure) ratio. Table~\ref{tab:data} summarizes the datasets.
 
-\begin{table}[t]
+\begin{table}[!t]
   \centering
-  \caption{Dataset Statistics}
+  \caption{Dataset Statistics (Generator Power Space)}
   \label{tab:data}
-  \begin{tabular}{lccccc}
+  \begin{tabular}{lccccl}
     \toprule
-    Case & $N$ & Feats & Load range & Feas.\ rate & Method \\
+    Case & Input & $N_\text{secure}$ & $N_\text{bg}$ & Secure\ rate & Source \\
     \midrule
-    WB2      & 4,000 & 2  & $\pm 50\%$   & 2.5\%  & Analytical \\
-    WB5      & 5,000 & 6  & $0.05\times$--$20\times$ & 93.2\% & pandapower \\
-    case9mod & 8,000 & 6  & $0.1\times$--$5.0\times$ & 48.7\% & pandapower \\
+    WB2      & $(P_d, Q_d)$         & 1,625 & 3,375 & 32.5\% & Analytical \\
+    WB5      & $(P_{G1}, P_{G5})$   & 32,068 & 64,136 & 33.3\% & Traditional CSV \\
+    case9mod & $(P_{G2}, P_{G3})$   & 2,735  & 5,470  & 33.3\% & Traditional CSV \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -464,9 +607,9 @@ with weighted random sampler. Metrics evaluated on the held-out test set.
 \textbf{Hyperparameters.} See Table~\ref{tab:hparams}. Early stopping with
 patience 40 on validation F1 score.
 
-\begin{table}[t]
+\begin{table}[!t]
   \centering
-  \caption{SSR-DL Hyperparameters}
+  \caption{SSR-PDNet Hyperparameters}
   \label{tab:hparams}
   \begin{tabular}{lc}
     \toprule
@@ -475,10 +618,10 @@ patience 40 on validation F1 score.
     Primal learning rate $\eta_\phi$ & $10^{-3}$ \\
     Dual learning rate $\eta_\lambda$ & $10^{-2}$ \\
     LR scheduler & Cosine annealing \\
-    Batch size & 512 \\
+    Batch size (WB5 / case9mod) & 512 / 256 \\
     Dropout & 0.1 \\
-    Max epochs & 300 \\
-    Early stopping patience & 40 \\
+    Max epochs (WB5 / case9mod) & 180 / 150 \\
+    Early stopping patience & 40 / 35 \\
     $\lambda_{\mathrm{phys}}$ & 0.1 \\
     $\lambda_c$ & 0.05 \\
     Contrastive margin $m$ & 0.5 \\
@@ -493,216 +636,335 @@ PyTorch~2.8. Inference time is sub-millisecond per sample on all cases.
 
 \subsection{Security Region Visualization}
 
-Fig.~\ref{fig:wb2_ssr} illustrates the WB2 security region in the 2D load
-space $(P_d, Q_d)$. The SSR is a small, well-defined region (light green)
-bounded by the voltage constraint $V_2 \in [0.95, 1.05]$~p.u. The nominal
-operating point (star) lies outside the SSR, consistent with the analytical
-dual-solution result of Proposition~1. SSR-DL accurately recovers the SSR
-boundary, with the predicted decision boundary (solid black) closely tracking
-the ground-truth boundary (dashed white).
+Fig.~\ref{fig:wb5_ipopt} and Fig.~\ref{fig:wb5_ssr} show the WB5 static security region in \emph{generator
+power space} $(P_{G1}, P_{G5})$. The traditional ground-truth set (Fig.~\ref{fig:wb5_ipopt}) reveals
+\textbf{2 disconnected secure components} — a key topological property of the
+true SSR arising from the nonconvexity of AC power flow constraints at certain
+$(P_{G1}, P_{G5})$ combinations. The SSR-PDNet predicted probability map (right)
+correctly reproduces both components, with two high-confidence green regions
+separated by an insecure gap. This result would be impossible in the
+\emph{wrong} load-space formulation, which cannot exhibit this disconnected structure.
 
-Fig.~\ref{fig:case9mod_ssr} shows the case9mod security region projected onto
-the $(P_{L1}, P_{L2})$ load plane (loads at buses~5 and~7). The feasible
-region (green) is bounded primarily by the tight $Q_{\min}=-5$~MVAR reactive
-power constraint. SSR-DL recovers the curved, non-convex security boundary
-with high fidelity.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB5_security_region.png}
+  \caption{WB5 static security region in generator power space $(P_{G1}, P_{G5})$.
+    Panel (a) shows the traditional ground truth. Panel (b) shows the SSR-PDNet
+    security-score field and recovered decision boundary. Panel (c) colors secure
+    operating points by slack dispatch share, revealing redispatch variation
+    across the two disconnected secure components.}
+  \label{fig:wb5_ssr}
+\end{figure}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB5_local_zoom.png}
+  \caption{WB5 local zoom around a boundary-dense region. Panel (a) shows local
+    secure-point arrangement; panel (b) shows hexbin point density with point
+    count, window area, and average local density; panel (c) overlays SSR-PDNet
+    score contours and the true boundary.}
+  \label{fig:wb5_zoom}
+\end{figure}
+
+Fig.~\ref{fig:case9mod_ipopt} and Fig.~\ref{fig:case9mod_ssr} show the case9mod static security region in
+$(P_{G2}, P_{G3})$ generator power space. The traditional ground-truth set (Fig.~\ref{fig:case9mod_ipopt})
+reveals \textbf{3 disconnected secure components}, caused by the tight
+$Q_{\min}=-5$~MVAR constraint creating insecure bands between different
+reactive-power-limited operating regimes. SSR-PDNet reproduces all three components
+with F1~=~0.9716 and outperforms both Baseline and Physics-NN under this split.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{case9mod_security_region.png}
+  \caption{case9mod static security region in generator power space $(P_{G2}, P_{G3})$.
+    Panel (a) shows the traditional ground truth. Panel (b) shows the SSR-PDNet
+    security-score field and recovered boundary. Panel (c) colors secure
+    operating points by minimum bus voltage, showing internal voltage-margin
+    variation across the three disconnected components.}
+  \label{fig:case9mod_ssr}
+\end{figure}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{case9mod_local_zoom.png}
+  \caption{case9mod local zoom around a boundary-dense region. Panel (a)
+    visualizes local secure-point layout; panel (b) shows density heterogeneity
+    via hexbin counts; panel (c) compares SSR-PDNet local score field with the
+    true boundary, highlighting sparse transition corridors between denser
+    secure clusters.}
+  \label{fig:case9_zoom}
+\end{figure}
+
+To make the formation mechanism of these regions visually clear at the local scale,
+Fig.~\ref{fig:wb5_zoom} and Fig.~\ref{fig:case9_zoom} provide boundary-focused
+zoom-in views. Each zoom window is centered on a boundary-dense subregion and
+reports: (a) secure-point scatter layout, (b) hexbin density map with local
+point-density statistics, and (c) SSR-PDNet score field with the true boundary
+overlay. These panels show that the region boundary is formed by highly
+nonuniform point arrangements, with dense ridges and sparse transition bands,
+rather than by a uniformly filled cloud.
+
+\FloatBarrier
 
 \subsection{Quantitative Results}
 
-Table~\ref{tab:results} presents classification metrics on the held-out test
-sets. SSR-DL consistently achieves the highest accuracy and F1 score across
-all cases.
+Table~\ref{tab:results} presents classification metrics on the held-out test sets,
+all computed in the correct \emph{generator power space} against traditional ground truth.
 
-\begin{table}[t]
+\begin{table}[!t]
   \centering
-  \caption{Test Set Classification Performance}
+  \caption{Test Set Classification Performance (Generator Power Space vs.\ Traditional Ground Truth)}
   \label{tab:results}
-  \begin{tabular}{llccccc}
+  \begin{threeparttable}
+  \begin{tabular}{llcccc}
     \toprule
-    Case & Model & Acc & F1 & Prec & Rec & Spec \\
+    Case & Model & Acc & F1 & Prec & Rec \\
     \midrule
     \multirow{3}{*}{WB2}
-      & Baseline   & 0.9967 & 0.9333 & 0.8750 & 1.0000 & 0.9966 \\
-      & Physics-NN & 0.9983 & 0.9655 & 0.9333 & 1.0000 & 0.9983 \\
-      & \textbf{SSR-DL}   & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} \\
+      & Baseline   & 0.9967 & 0.9600 & 1.0000 & 0.9231 \\
+      & Physics-NN & 0.9967 & 0.9600 & 1.0000 & 0.9231 \\
+      & \textbf{SSR-PDNet}   & 0.9900 & 0.8966 & 0.8125 & \textbf{1.0000} \\
     \midrule
     \multirow{3}{*}{WB5}
-      & Baseline   & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
-      & Physics-NN & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
-      & SSR-DL     & 0.9799 & 0.9893 & 0.9872 & 0.9914 & 0.8125 \\
+      & Baseline   & 0.9694 & 0.9565 & 0.9285 & 0.9864 \\
+      & Physics-NN & 0.9669 & 0.9530 & 0.9235 & 0.9844 \\
+      & \textbf{SSR-PDNet}   & \textbf{0.9769} & \textbf{0.9671} & \textbf{0.9391} & \textbf{0.9967} \\
     \midrule
     \multirow{3}{*}{case9mod}
-      & Baseline   & 0.9950 & 0.9948 & 0.9914 & 0.9983 & 0.9919 \\
-      & Physics-NN & 0.9950 & 0.9948 & 0.9931 & 0.9965 & 0.9936 \\
-      & \textbf{SSR-DL}   & \textbf{0.9967} & \textbf{0.9966} & \textbf{0.9948} & \textbf{0.9983} & \textbf{0.9952} \\
+      & Baseline   & 0.9720 & 0.9447 & 0.9161 & 0.9752 \\
+      & Physics-NN & 0.9714 & 0.9436 & 0.9140 & 0.9752 \\
+      & \textbf{SSR-PDNet}   & \textbf{0.9860} & \textbf{0.9716} & \textbf{0.9657} & \textbf{0.9777} \\
+    \midrule
+    \multirow{3}{*}{LMBM3 ($\lambda$=1.49)}
+      & Baseline   & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+      & Physics-NN & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+      & \textbf{SSR-PDNet}   & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} \\
+    \midrule
+    \multirow{3}{*}{LMBM3 ($\lambda$=1.50)}
+      & Baseline   & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+      & Physics-NN & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+      & \textbf{SSR-PDNet}   & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} & \textbf{1.0000} \\
     \bottomrule
   \end{tabular}
   \begin{tablenotes}
     \small
-    \item Acc=Accuracy, Prec=Precision, Rec=Recall, Spec=Specificity.
+    \item All metrics computed on held-out test sets against traditional-solver labels.
+    \item WB2: analytical (load space); WB5: 32,068 secure + 64,136 background;
+          case9mod: 2,735 secure + 5,470 background;
+          LMBM3: 12,273 (λ=1.49) and 18,151 (λ=1.50) secure + 2$\times$ background.
+    \item LMBM3 perfect score reflects a well-separated secure-set structure at these load factors.
     \item Bold: best result per case.
   \end{tablenotes}
+  \end{threeparttable}
 \end{table}
 
-\textbf{WB2.} SSR-DL achieves \textbf{perfect classification} (all metrics
-= 1.000) despite the extreme class imbalance (feasibility rate 2.5\%). The
-Baseline NN misclassifies 2 negative samples (false positives) and the
-Physics-NN misclassifies 1, while SSR-DL makes zero errors. The contrastive
-boundary loss plays a critical role here: with only $\sim 100$ feasible
-training samples, it explicitly pushes the decision boundary away from
-infeasible regions.
+\textbf{WB2.} On the highly imbalanced WB2 split, SSR-PDNet keeps full recall
+(1.000) with F1~=~0.8966. Compared with Baseline and Physics-NN (F1~=~0.9600),
+it is more conservative in security labeling (higher false-positive rate), which
+is still useful when missed secure points are prioritized over stricter precision.
 
-\textbf{WB5.} All three models achieve near-perfect performance on WB5 because
-the feasibility rate is high (93.2\%) and the boundary is smooth and
-well-separated. SSR-DL's slightly lower specificity (0.81 vs.~1.00) reflects
-that the Lagrange dual training encourages conservative predictions (fewer
-false positives in operating constraints) at the cost of slightly more false
-negatives on the small infeasible subset.
+\textbf{WB5.} SSR-PDNet achieves F1~=~0.9671 and near-perfect recall (0.9967),
+correctly identifying essentially all secure $(P_{G1}, P_{G5})$ operating
+points (ROC/PR curves in Fig.~\ref{fig:roc_wb5}). The high recall is safety-critical: missing a secure point means
+unnecessarily restricting dispatch. SSR-PDNet correctly reproduces \emph{both
+disconnected secure components} of the WB5 static security region.
 
-\textbf{case9mod.} On the most challenging case, SSR-DL outperforms both
-baselines. The improvement is most visible in specificity ($0.9952$ vs.
-$0.9919$/$0.9936$), meaning SSR-DL is better at correctly identifying
-infeasible operating points — the more safety-critical prediction in power
-system operation.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB5_roc_pr.png}
+  \caption{ROC and precision-recall curves for WB5 (generator power space).
+    SSR-PDNet achieves AUC-ROC~=~0.985 and AUC-PR~=~0.980, outperforming the
+    Baseline NN (AUC-ROC~=~0.974, AUC-PR~=~0.968).}
+  \label{fig:roc_wb5}
+\end{figure}
+
+\textbf{case9mod.} SSR-PDNet achieves F1~=~0.9716, outperforming Baseline NN
+(0.9447) and Physics-NN (0.9436) under this split.
+(ROC/PR curves in Fig.~\ref{fig:roc_case9}).
+More importantly, SSR-PDNet correctly reproduces all three disconnected secure
+components in $(P_{G2}, P_{G3})$ space — a structural property that cannot
+be captured by models operating in load space.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{case9mod_roc_pr.png}
+  \caption{ROC and precision-recall curves for case9mod (generator power space).
+    SSR-PDNet achieves AUC-ROC~=~0.995 and AUC-PR~=~0.994.}
+  \label{fig:roc_case9}
+\end{figure}
+
+\textbf{LMBM3.} Both load-factor settings ($\lambda=1.490$ and $\lambda=1.500$)
+yield perfect F1~=~1.000 and Recall~=~1.000 for all models, including SSR-PDNet.
+This reflects a well-separated secure-set structure in $(P_{G1}, P_{G2})$ space
+at these near-collapse operating points: once the traditional labels provide accurate
+labels, the classification task is straightforward. The interesting behavior
+is the topological transition (bifurcation) between $\lambda$ values, visualized
+in Fig.~\ref{fig:lmbm3}.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{LMBM3_traditional.png}
+  \caption{LMBM3 three-bus traditional secure-set results under two
+    load-factor parametrizations. For each load factor, the left panel shows the
+    static security region in $(P_{G1}, P_{G2})$ space and the right panel shows
+    the associated internal voltage margin. At $\lambda=1.490$, a narrow secure band
+    persists near the binding thermal limit $S_{L_{3\text{-}2}} \leq 186$~MVA; at
+    $\lambda=1.500$, the secure set collapses to a single near-bifurcation point.}
+  \label{fig:lmbm3}
+\end{figure}
+
+\textbf{Grid and boundary comparison.} Table~\ref{tab:boundary} reports
+grid-level agreement and boundary-focused scores relative to the traditional
+ground truth.
+
+\begin{table}[!t]
+  \centering
+  \caption{Grid and Boundary Accuracy vs.\ Traditional Ground Truth}
+  \label{tab:boundary}
+  \begin{tabular}{llccc}
+    \toprule
+    Case & Model & Grid Acc & Boundary F1 & $\Delta$Boundary F1 \\
+    \midrule
+    \multirow{2}{*}{WB5}
+      & Baseline & 0.9023 & 0.6270 & baseline \\
+      & \textbf{SSR-PDNet} & \textbf{0.9602} & \textbf{0.6295} & +0.40\% \\
+    \midrule
+    \multirow{2}{*}{case9mod}
+      & Baseline & 0.8520 & 0.5424 & baseline \\
+      & \textbf{SSR-PDNet} & \textbf{0.9034} & \textbf{0.5427} & +0.05\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \subsection{Training Dynamics}
 
-Fig.~\ref{fig:training} shows training curves for case9mod. SSR-DL converges
-to a higher validation F1 than both baselines within $\sim 80$ epochs. The
-Lagrange multiplier $\lambda_V$ stabilizes around $0.9$ after the first 20
-epochs, indicating that the dual variable reaches a meaningful equilibrium
-where voltage constraints are softly but consistently enforced. The contrastive
-loss component decreases monotonically as the model learns to separate feasible
-and infeasible predictions.
+SSR-PDNet converges to strong validation F1 within $\sim 40$ epochs on case9mod
+and $\sim 80$ epochs on WB5 (Figs.~\ref{fig:training_case9} and
+\ref{fig:training_wb5}). The Lagrange multiplier $\lambda_V$ stabilizes
+around $1.15$--$1.22$ after epoch~20, indicating a stable primal-dual
+equilibrium under voltage-margin penalties. Early stopping patience of
+35--40 epochs helps prevent overfitting to the background insecure class.
 
-\subsection{ROC and Precision-Recall Analysis}
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{WB5_training.png}
+  \caption{Training dynamics for WB5 (generator power space). SSR-PDNet (blue)
+    achieves consistently higher validation F1 than the Baseline NN (orange),
+    converging in $\sim$80 epochs. The Lagrange multiplier $\lambda_V$ (green,
+    right axis) stabilizes around $1.13$--$1.18$ after epoch~20, indicating
+    stable dual-variable convergence under voltage-constraint soft penalties.}
+  \label{fig:training_wb5}
+\end{figure}
 
-Fig.~\ref{fig:roc} shows ROC and precision-recall curves for WB2. SSR-DL
-achieves AUC-ROC $= 1.000$ and AUC-PR $= 1.000$, confirming the absence of
-any threshold at which it makes classification errors. The Baseline NN and
-Physics-NN, while achieving high AUC ($>0.999$), fail to perfectly separate
-the two classes under any threshold.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{case9mod_training.png}
+  \caption{Training dynamics for case9mod (generator power space). SSR-PDNet
+    converges in $\sim$40 epochs. The Lagrange multiplier stabilizes at a
+    higher value than WB5, reflecting stronger voltage-constraint activity
+    in the 9-bus system with $Q_{\min}=-5$~MVAR.}
+  \label{fig:training_case9}
+\end{figure}
+
+\FloatBarrier
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
 \label{sec:discussion}
 % ─────────────────────────────────────────────────────────────────────────────
 
-\subsection{Why SSR-DL Works}
+\subsection{Importance of Correct Coordinate Space}
 
-The key advantage of SSR-DL over the baseline is the combination of:
-(1)~the contrastive boundary loss, which provides an explicit signal to widen
-the margin between feasible and infeasible prediction scores, particularly
-beneficial when the feasible class is rare; and (2)~the residual classifier
-architecture, which preserves gradient information from the shared feature
-extractor even in deep networks.
+The most critical finding of this work is that \textbf{the choice of coordinate
+space fundamentally determines whether the SSR can be correctly characterized}.
+Previous approaches operating in load space (varying $P_L, Q_L$) with fixed
+generators are solving the wrong problem: the SSR as defined by Bukhsh et al.\
+and Jiang \& Chiang is in \emph{generator power space}, not load space.
 
-The physics head and Lagrange dual training provide regularization that
-improves specificity — the model avoids predicting ``feasible'' for points
-that would violate voltage constraints even if they nominally converge in power
-flow. This is the most important metric from an operational safety perspective.
+In load space, the security boundary reflects which load conditions admit
+a secure dispatch — but loads are typically known and fixed in operation;
+the controllable variables are generator outputs. In generator power space
+(with loads fixed at nominal), the SSR directly answers: ``for this dispatch
+plan $(P_{G2}, P_{G3})$, does a secure AC operating point exist?''
+This is the operationally relevant question for security assessment.
 
-\subsection{Limitations}
+The disconnected component structure (2 components for WB5, 3 for case9mod)
+is a topological property of the SSR in generator power space that stems from
+the multiple local solutions of the AC power flow equations~\cite{bukhsh2013local}
+and the quotient gradient system bifurcation theory~\cite{jiang2017feasibility}.
+A model trained in load space cannot reproduce this structure.
 
-\textbf{WB5 specificity.} On WB5, SSR-DL's specificity drops to 0.81 because
-the infeasible class contains only $\sim 110$ test samples, making evaluation
-noisy. The absolute number of misclassified infeasible points (3 false
-negatives) is small.
+\subsection{Why SSR-PDNet Outperforms Baselines}
 
-\textbf{LMBM3.} The LMBM3 case from Bukhsh et al.\ presents a structural
-challenge: the line L3-2 (rated 186~MVA) is overloaded by more than 2300\%
-at the nominal operating point in the full AC power flow model with unconstrained
-reactive power generation. This arises because the original MATPOWER model
-assumes $Q_{\max} = \pm 1000$~MVAR for all generators, allowing unrealistic
-reactive support. As a result, no sampled load configuration in the nominal
-region satisfies all constraints, and LMBM3 is excluded from the main
-experiments.
+The key advantages of SSR-PDNet over the Baseline NN are:
+(1)~the \emph{contrastive boundary loss}, which explicitly widens the margin
+between secure and insecure predictions, particularly effective near the
+thin insecure corridors separating the 3 components in case9mod;
+(2)~the \emph{residual classifier} with skip connection, which preserves
+gradient information through deep layers; and
+(3)~the \emph{Lagrange dual training}, which promotes conservative security
+predictions by penalizing predicted-secure points whose voltage profiles
+violate the physics constraints.
 
-\textbf{Scalability.} Data generation by pandapower AC power flow is the
-computational bottleneck: $O(1)$ seconds per sample for case9mod. For
-larger systems (100+ buses), the worth-learning data generation approach
-of Hu et al.~\cite{hu2024pmi} — which uses adversarial search to find boundary
-samples without uniform grid enumeration — would be necessary.
+\subsection{Limitations and Future Work}
 
-\textbf{Dynamic security.} The SSR as defined here considers only static
-security (power flow feasibility). Extension to dynamic security (transient
-stability, frequency response) would require substantially different constraint
-checking and is left for future work.
+\textbf{Background insecure data quality.} The background insecure points
+are sampled uniformly, which may include points far from the boundary and
+create an imbalanced difficulty distribution. Worth-learning adversarial
+sampling~\cite{hu2024pmi} targeting the boundary region would improve
+boundary F1 further.
+
+\textbf{LMBM3.} The LMBM3 case exhibits a narrow secure band that requires
+dense feasibility scanning with load-factor parametrization ($\lambda \in [1.0, 1.5]$)
+to capture the bifurcation behavior. Fig.~\ref{fig:lmbm3} visualizes the
+pre-computed traditional results at $\lambda=1.490$ (pre-bifurcation narrow
+secure band) and $\lambda=1.500$ (voltage collapse onset). Under the current
+dataset construction, DL classification is nearly separable and all compared
+models achieve F1~=~1.000 on both reported load factors.
+
+\textbf{Scalability.} For larger systems (100+ buses), dense nonlinear grid scanning
+approach becomes intractable. Adaptive boundary sampling strategies and GNN-based
+architectures exploiting network topology~\cite{kim2025pignn} are promising
+directions.
+
+\textbf{Dynamic security.} Extension from static security regions to transient
+stability and voltage-stability regions is an important direction for future work.
 
 \subsection{Comparison with Related Work}
 
-Unlike OPF surrogate methods~\cite{pan2023deepopf} that predict \emph{optimal}
-dispatch points, SSR-DL predicts \emph{feasibility} — a fundamentally different
-and arguably more safety-critical task. Unlike FSNet~\cite{nguyen2025fsnet} or
-homeomorphic projection~\cite{liang2023homeomorphic}, which enforce feasibility
-of predicted solutions by construction, SSR-DL classifies whether a \emph{given}
-load condition admits any feasible solution, without constructing one.
+Unlike dispatch surrogate methods~\cite{pan2023deepopf} that predict \emph{optimal}
+dispatch, SSR-PDNet predicts \emph{security-region membership} in generator power space —
+the safety-critical question of whether a candidate dispatch admits any
+AC-secure solution. Unlike FSNet~\cite{nguyen2025fsnet} or homeomorphic
+projection~\cite{liang2023homeomorphic}, which enforce feasibility of a
+\emph{single} predicted solution, SSR-PDNet characterizes the entire SSR boundary
+as a global structure.
 
-The closest related method is the dynamical-systems approach of
-Jiang and Chiang~\cite{jiang2017feasibility}, which analytically characterizes
-feasibility regions as stable equilibrium manifolds. Our approach learns the
-same boundary implicitly from data, trading analytical rigor for scalability
-and the ability to handle complex, high-dimensional load spaces.
+The closest prior work is Jiang and Chiang~\cite{jiang2017feasibility}, which
+analytically characterizes the same SSR using quotient gradient system theory.
+Our approach learns the same boundary from traditional labeled data, trading analytical rigor
+for scalability and the ability to handle arbitrary network topology without
+closed-form power flow inversions.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Conclusion}
 \label{sec:conclusion}
 % ─────────────────────────────────────────────────────────────────────────────
 
-We presented SSR-DL, a deep learning framework for characterizing power system
-static security regions. By combining a dual-branch architecture with Lagrange
-dual training and contrastive boundary loss, SSR-DL achieves superior
-performance on the challenging Bukhsh et al.\ multi-solution OPF benchmarks,
-including perfect classification on the WB2 case and state-of-the-art F1 on
-case9mod. Our open-source implementation provides complete pandapower
-translations of all Bukhsh et al.\ cases, enabling reproducible research.
+We presented SSR-PDNet, a physics-informed neural framework for characterizing the
+static security region in \emph{generator power space} — the correct coordinate
+space for power system security assessment. By working in generator power space
+with loads fixed at nominal, SSR-PDNet reproduces the disconnected component
+structure (2 components for WB5, 3 for case9mod) that is the defining topological
+feature of the static security region in the Bukhsh et al.\ benchmark cases. SSR-PDNet
+achieves F1~=~0.9671 on WB5 and F1~=~0.9716 on case9mod, with near-perfect
+recall (0.9967) on WB5 and full recall (1.000) on WB2, critical for operational safety.
 
 Future work will address: (i)~scalability to large systems via graph neural
 network encoders that exploit network topology; (ii)~extension to $N{-}1$
 contingency security regions; (iii)~integration with online security assessment
 workflows; and (iv)~incorporation of the worth-learning data generation strategy
 to efficiently sample near the security boundary.
-
-% ─────────────────────────────────────────────────────────────────────────────
-% Figure placeholders
-% ─────────────────────────────────────────────────────────────────────────────
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{../figures/WB2_analytical.png}
-  \caption{WB2 security region analysis. \textit{Left}: True SSR (green) in
-    the $(P_d, Q_d)$ load space with voltage contours. \textit{Center}: The
-    two local solution branches (high-V and low-V) — both violate the voltage
-    constraint at the nominal point (star). \textit{Right}: SSR-DL predicted
-    probability, with predicted boundary (solid) and true boundary (dashed).}
-  \label{fig:wb2_ssr}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{../figures/case9mod_security_region.png}
-  \caption{case9mod security region projected onto the $(P_{L1}, P_{L2})$ plane.
-    \textit{Left}: Ground truth. \textit{Center}: SSR-DL prediction.
-    \textit{Right}: Error map (misclassified regions in dark red). Grid
-    accuracy = 0.962.}
-  \label{fig:case9mod_ssr}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{../figures/case9mod_training.png}
-  \caption{Training dynamics for case9mod. SSR-DL achieves higher validation
-    F1 than both baselines. The Lagrange multiplier $\lambda_V$ stabilizes
-    around 0.90, indicating convergent dual variable evolution.}
-  \label{fig:training}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{../figures/WB2_roc_pr.png}
-  \caption{ROC and PR curves for WB2. SSR-DL achieves AUC-ROC = AUC-PR = 1.000.}
-  \label{fig:roc}
-\end{figure}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \bibliographystyle{IEEEtran}

@@ -1,4 +1,4 @@
-# PowerSSR-DL: Deep Learning for Power System Static Security Region Characterization
+# PowerSSR-PDNet: Primal-Dual Network for Power System Static Security Region Characterization
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/pytorch-2.0+-orange.svg)](https://pytorch.org/)
@@ -41,7 +41,7 @@ Standard feedforward classifier with focal loss for class imbalance.
 ### 2. Physics-NN
 Adds voltage profile prediction branch and constraint violation penalty.
 
-### 3. SSR-DL (Proposed)
+### 3. SSR-PDNet (Proposed)
 Our proposed architecture featuring:
 - **Dual-branch architecture**: shared feature extractor + classifier head + physics head
 - **Lagrange dual training**: learnable dual variables for soft constraint enforcement
@@ -52,12 +52,12 @@ Our proposed architecture featuring:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/PowerSSR-DL.git
-cd PowerSSR-DL
+git clone https://github.com/<your-username>/PowerSSR-PDNet.git
+cd PowerSSR-PDNet
 
 # Create conda environment (recommended)
-conda create -n ssr-dl python=3.10 -y
-conda activate ssr-dl
+conda create -n ssr-pdnet python=3.10 -y
+conda activate ssr-pdnet
 
 # Install dependencies
 pip install -r requirements.txt
@@ -96,11 +96,11 @@ python experiments/generate_paper_figures.py
 ## Project Structure
 
 ```
-PowerSSR-DL/
+PowerSSR-PDNet/
 ├── src/
 │   ├── bukhsh_cases.py      # Bukhsh et al. test cases in pandapower format
 │   ├── bukhsh_data.py       # Data generation (LHS sampling + power flow)
-│   ├── models.py            # Neural network architectures (Baseline, Physics-NN, SSR-DL)
+│   ├── models.py            # Neural network architectures (Baseline, Physics-NN, SSR-PDNet)
 │   ├── trainer.py           # Training loops, metrics, evaluation
 │   └── visualization.py     # Security region plots, comparison figures
 ├── experiments/
@@ -117,24 +117,32 @@ PowerSSR-DL/
 
 ### WB2 (2-Bus, Analytical)
 
-| Model      | Accuracy | F1     | Precision | Recall | Specificity |
-|------------|----------|--------|-----------|--------|-------------|
-| Baseline   | 0.9967   | 0.9333 | 0.8750    | 1.0000 | 0.9966      |
-| Physics-NN | 0.9983   | 0.9655 | 0.9333    | 1.0000 | 0.9983      |
-| **SSR-DL** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** |
+| Model         | Accuracy | F1     | Precision | Recall | Specificity |
+|---------------|----------|--------|-----------|--------|-------------|
+| Baseline      | 0.9967   | 0.9600 | 1.0000    | 0.9231 | 1.0000      |
+| Physics-NN    | 0.9967   | 0.9600 | 1.0000    | 0.9231 | 1.0000      |
+| **SSR-PDNet** | 0.9900   | 0.8966 | 0.8125    | 1.0000 | 0.9895      |
+
+### WB5 (5-Bus Meshed)
+
+| Model         | Accuracy | F1     | Precision | Recall | Specificity |
+|---------------|----------|--------|-----------|--------|-------------|
+| Baseline      | 0.9694   | 0.9565 | 0.9285    | 0.9864 | 0.9607      |
+| Physics-NN    | 0.9669   | 0.9530 | 0.9235    | 0.9844 | 0.9578      |
+| **SSR-PDNet** | **0.9769** | **0.9671** | **0.9391** | **0.9967** | **0.9666** |
 
 ### case9mod (Modified IEEE 9-Bus)
 
-| Model      | Accuracy | F1     | Precision | Recall | Specificity |
-|------------|----------|--------|-----------|--------|-------------|
-| Baseline   | 0.9950   | 0.9948 | 0.9914    | 0.9983 | 0.9919      |
-| Physics-NN | 0.9950   | 0.9948 | 0.9931    | 0.9965 | 0.9936      |
-| **SSR-DL** | **0.9967** | **0.9966** | **0.9948** | **0.9983** | **0.9952** |
+| Model         | Accuracy | F1     | Precision | Recall | Specificity |
+|---------------|----------|--------|-----------|--------|-------------|
+| Baseline      | 0.9720   | 0.9447 | 0.9161    | 0.9752 | 0.9709      |
+| Physics-NN    | 0.9714   | 0.9436 | 0.9140    | 0.9752 | 0.9701      |
+| **SSR-PDNet** | **0.9860** | **0.9716** | **0.9657** | **0.9777** | **0.9887** |
 
 **Key findings:**
-- SSR-DL achieves **perfect classification (F1=1.000)** on the WB2 case with tiny feasibility region (~2.5%)
-- SSR-DL consistently outperforms baselines on specificity (correctly identifying infeasible points)
-- Lagrange dual variables stabilize around λ_v ≈ 0.9, indicating meaningful constraint enforcement
+- SSR-PDNet achieves the best overall performance on WB5 and case9mod, while preserving disconnected security-set topology.
+- On WB2, SSR-PDNet keeps full recall (1.000) with a more conservative boundary (higher false positives).
+- The dual variable $\lambda_v$ stabilizes around 1.15-1.22 in quick runs, indicating active primal-dual constraint regulation.
 
 ## Mathematical Formulation
 
@@ -144,7 +152,7 @@ The SSR is defined as the set of load operating points $(P_L, Q_L)$ for which a 
 
 $$\text{SSR} = \{(P_L, Q_L) \in \mathbb{R}^{2n_L} : \exists (V, \theta) \text{ s.t. } f_{PF}(V,\theta,P_L,Q_L) = 0, \; g(V,\theta) \leq 0\}$$
 
-### SSR-DL Training Objective
+### SSR-PDNet Training Objective
 
 $$\mathcal{L} = \mathcal{L}_{\text{focal}}(\hat{y}, y) + \lambda_{\text{phys}} \cdot \mathcal{L}_{\text{physics}} + \lambda_c \cdot \mathcal{L}_{\text{contrastive}}$$
 
@@ -178,6 +186,6 @@ If you use this code in your research, please cite:
   title={Deep Learning-Based Characterization of Power System Static Security Regions},
   author={[Authors]},
   year={2025},
-  url={https://github.com/yourusername/PowerSSR-DL}
+  url={https://github.com/<your-username>/PowerSSR-PDNet}
 }
 ```
