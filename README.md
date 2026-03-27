@@ -52,7 +52,7 @@ Our proposed architecture featuring:
 
 ```bash
 # Clone repository
-git clone https://github.com/<your-username>/PowerSSR-PDNet.git
+git clone https://github.com/pj0402001/PowerSSR-PDNet.git
 cd PowerSSR-PDNet
 
 # Create conda environment (recommended)
@@ -184,8 +184,8 @@ If you use this code in your research, please cite:
 ```bibtex
 @misc{powerssr2025,
   title={Deep Learning-Based Characterization of Power System Static Security Regions},
-  author={[Authors]},
+  author={Peng Jiao},
   year={2025},
-  url={https://github.com/<your-username>/PowerSSR-PDNet}
+  url={https://github.com/pj0402001/PowerSSR-PDNet}
 }
 ```
