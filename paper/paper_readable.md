@@ -488,6 +488,14 @@ rather than by a uniformly filled cloud.
 Table [ref] presents classification metrics on the held-out test sets,
 all computed in the correct *generator power space* against traditional ground truth.
 
+To verify whether the framework can approximate not only security labels but
+also the *underlying OPF state*, we additionally trained a full-output
+surrogate on case9mod that jointly predicts: (i) security feasibility and
+(ii) internal state variables
+$\{P_{G1},Q_{G1:3},V_{1:9},\theta_{1:9}\}$. This model uses the same
+traditional samples and reports pointwise state errors only on feasible
+operating points where traditional state labels exist.
+
 > [Table omitted in readable markdown.]
 
 **WB2.** On the highly imbalanced WB2 split, SSR-PDNet keeps full recall
@@ -527,6 +535,23 @@ grid-level agreement and boundary-focused scores relative to the traditional
 ground truth.
 
 > [Table omitted in readable markdown.]
+
+**Full-state surrogate accuracy (case9mod).**
+Table [ref] reports the multitask surrogate results. In
+addition to high security-classification accuracy, the model achieves low
+state-variable errors: voltage MAE is around $10^{-3}$ p.u., angle MAE is
+around $10^{-1}$ degree, and reactive-power MAE is around $10^{-1}$ MVAR.
+These results indicate that the learned mapping captures not only the boundary
+topology of the static security region, but also the physical operating-state
+structure behind each secure point.
+
+> [Table omitted in readable markdown.]
+
+**Pointwise state comparison.**
+Representative points are listed in the released comparison file
+`results/case9mod\_fullstate\_point\_comparison.csv`, where each row
+contains input dispatch, traditional feasibility label, surrogate probability,
+predicted states, traditional states, and grouped MAE statistics.
 
 ## Training Dynamics
 
@@ -628,6 +653,12 @@ structure (2 components for WB5, 3 for case9mod) that is the defining topologica
 feature of the static security region in the Bukhsh et al.\ benchmark cases. SSR-PDNet
 achieves F1 = 0.9671 on WB5 and F1 = 0.9716 on case9mod, with near-perfect
 recall (0.9967) on WB5 and full recall (1.000) on WB2, critical for operational safety.
+
+Beyond boundary characterization, the added full-state surrogate study on
+case9mod demonstrates that a neural surrogate can jointly recover security
+labels and internal OPF state variables with high fidelity relative to the
+traditional solver, supporting a practical path toward replacing repetitive
+pointwise nonlinear solves in online security-assessment workflows.
 
 Future work will address: (i) scalability to large systems via graph neural
 network encoders that exploit network topology; (ii) extension to $N{-}1$

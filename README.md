@@ -139,10 +139,32 @@ PowerSSR-PDNet/
 | Physics-NN    | 0.9714   | 0.9436 | 0.9140    | 0.9752 | 0.9701      |
 | **SSR-PDNet** | **0.9860** | **0.9716** | **0.9657** | **0.9777** | **0.9887** |
 
+### case9mod Full-State Surrogate (New)
+
+The repository now includes a full-output surrogate that jointly predicts:
+- security feasibility probability;
+- OPF state variables: `p1_mw`, `q1_mvar..q3_mvar`, `v1_pu..v9_pu`, `theta1_deg..theta9_deg`.
+
+Run:
+
+```bash
+python experiments/train_full_state_surrogate.py --data-dir "D:\安全域\1" --epochs 140 --seed 42
+```
+
+Generated artifacts:
+- `results/case9mod_fullstate_metrics.json` (classification + state regression metrics)
+- `results/case9mod_fullstate_point_comparison.json` (pointwise traditional vs model states)
+- `results/case9mod_fullstate_point_comparison.csv` (CSV view of pointwise comparison)
+
+Test-set headline results (case9mod full-state model):
+- Classification: `Acc=0.9915, F1=0.9831, Prec=0.9737, Rec=0.9927`
+- State MAE groups: `P=0.8366 MW, Q=0.1588 MVAR, V=0.0010 p.u., theta=0.0850 deg`
+
 **Key findings:**
 - SSR-PDNet achieves the best overall performance on WB5 and case9mod, while preserving disconnected security-set topology.
 - On WB2, SSR-PDNet keeps full recall (1.000) with a more conservative boundary (higher false positives).
 - The dual variable $\lambda_v$ stabilizes around 1.15-1.22 in quick runs, indicating active primal-dual constraint regulation.
+- The new case9mod full-state surrogate provides internal OPF-state outputs in addition to feasibility labels, with low voltage/angle errors against traditional solutions.
 
 ## Mathematical Formulation
 
