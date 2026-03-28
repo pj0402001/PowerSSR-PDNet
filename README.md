@@ -148,23 +148,29 @@ The repository now includes a full-output surrogate that jointly predicts:
 Run:
 
 ```bash
-python experiments/train_full_state_surrogate.py --data-dir "D:\安全域\1" --epochs 140 --seed 42
+python experiments/train_full_state_surrogate.py --data-dir "D:\安全域\1" --arch baseline --epochs 120 --seed 42
+
+# Physics-structured variant (recommended for better P1/closure accuracy)
+python experiments/train_full_state_surrogate.py --data-dir "D:\安全域\1" --arch energy_closure --epochs 140 --seed 42 --lambda-monotonic 0.15 --p1-weight 4.0
 ```
 
 Generated artifacts:
-- `results/case9mod_fullstate_metrics.json` (classification + state regression metrics)
-- `results/case9mod_fullstate_point_comparison.json` (pointwise traditional vs model states)
-- `results/case9mod_fullstate_point_comparison.csv` (CSV view of pointwise comparison)
+- `results/case9mod_fullstate_pdnet_metrics.json` (baseline full-state metrics)
+- `results/case9mod_fullstate_ecpd_metrics.json` (energy-closure full-state metrics)
+- `results/case9mod_fullstate_pdnet_point_comparison.csv`
+- `results/case9mod_fullstate_ecpd_point_comparison.csv`
 
-Test-set headline results (case9mod full-state model):
-- Classification: `Acc=0.9915, F1=0.9831, Prec=0.9737, Rec=0.9927`
-- State MAE groups: `P=0.8366 MW, Q=0.1588 MVAR, V=0.0010 p.u., theta=0.0850 deg`
+Test-set headline comparison (case9mod):
+- Baseline full-state model: `F1=0.9841`, `P1_MAE=0.8595 MW`, `overall_MAE=0.0994`
+- Energy-closure model: `F1=0.9817`, `P1_MAE=0.1304 MW`, `overall_MAE=0.0825`
+- Power-closure mean absolute error: `0.8595 -> 0.1304 MW` (improved)
 
 **Key findings:**
 - SSR-PDNet achieves the best overall performance on WB5 and case9mod, while preserving disconnected security-set topology.
 - On WB2, SSR-PDNet keeps full recall (1.000) with a more conservative boundary (higher false positives).
 - The dual variable $\lambda_v$ stabilizes around 1.15-1.22 in quick runs, indicating active primal-dual constraint regulation.
 - The new case9mod full-state surrogate provides internal OPF-state outputs in addition to feasibility labels, with low voltage/angle errors against traditional solutions.
+- The energy-closure surrogate further improves slack active-power consistency by embedding active-power balance directly into the network output parameterization.
 
 ## Mathematical Formulation
 

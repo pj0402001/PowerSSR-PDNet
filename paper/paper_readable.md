@@ -496,6 +496,22 @@ $\{P_{G1},Q_{G1:3},V_{1:9},\theta_{1:9}\}$. This model uses the same
 traditional samples and reports pointwise state errors only on feasible
 operating points where traditional state labels exist.
 
+**From regression to physics-structured state recovery.**
+To improve the most sensitive state variable $P_{G1}$ (slack active power), we
+introduce an *energy-closure parameterization*: instead of directly
+regressing $P_{G1}$, the network predicts nonnegative active-loss
+$\hat{P}_{\mathrm{loss}}$ and reconstructs
+
+$$
+\hat{P}_{G1} = P_{\mathrm{load}} + \hat{P}_{\mathrm{loss}} - P_{G2} - P_{G3}.
+$$
+
+This embeds active-power balance into the architecture and reduces unconstrained
+regression degrees of freedom. We further use (i) grouped state-head outputs
+with range-aware mappings for $Q$ and $V$, and (ii) a monotonic prior on the
+slack response ($\partial \hat{P}_{G1}/\partial P_{G2} \le 0$,
+$\partial \hat{P}_{G1}/\partial P_{G3} \le 0$) as an additional regularizer.
+
 > [Table omitted in readable markdown.]
 
 **WB2.** On the highly imbalanced WB2 split, SSR-PDNet keeps full recall
@@ -548,10 +564,14 @@ structure behind each secure point.
 > [Table omitted in readable markdown.]
 
 **Pointwise state comparison.**
-Representative points are listed in the released comparison file
-`results/case9mod\_fullstate\_point\_comparison.csv`, where each row
+Representative points are listed in the released comparison files,
+where each row
 contains input dispatch, traditional feasibility label, surrogate probability,
 predicted states, traditional states, and grouped MAE statistics.
+
+In our implementation, two pointwise CSV files are released for direct
+inspection: `results/case9mod\_fullstate\_pdnet\_point\_comparison.csv`
+and `results/case9mod\_fullstate\_ecpd\_point\_comparison.csv`.
 
 ## Training Dynamics
 

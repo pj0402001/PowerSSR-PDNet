@@ -88,6 +88,7 @@ class Case9Dataset:
     state_std: np.ndarray
     p2_grid: np.ndarray
     p3_grid: np.ndarray
+    total_load_mw: float
     secure_lookup: Dict[Tuple[int, int], np.ndarray]
     secure_points: np.ndarray
     insecure_points: np.ndarray
@@ -119,6 +120,7 @@ def build_case9mod_dataset(
     """
     rng = np.random.default_rng(seed)
     df = load_case9mod_traditional(data_dir)
+    total_load_mw = float(df["total_load"].iloc[0]) if "total_load" in df.columns else 189.0
 
     # Canonical scan lattice from original pipeline
     p2_grid = np.linspace(10.0, 300.0, 300, dtype=np.float32)
@@ -214,6 +216,7 @@ def build_case9mod_dataset(
         state_std=state_std,
         p2_grid=p2_grid,
         p3_grid=p3_grid,
+        total_load_mw=total_load_mw,
         secure_lookup=secure_lookup,
         secure_points=X_feas,
         insecure_points=X_infeas,
@@ -234,11 +237,12 @@ def split_indices(y_cls: np.ndarray, seed: int = 42) -> Dict[str, np.ndarray]:
         random_state=seed + 1,
         stratify=y_cls[idx_tmp],
     )
-    return {
+    out: Dict[str, np.ndarray] = {
         "train": idx_train,
         "val": idx_val,
         "test": idx_test,
     }
+    return out
 
 
 class MultiTaskDataset(Dataset):
@@ -347,6 +351,152 @@ class FullStatePDNet(nn.Module):
         return logit, state_norm
 
 
+class EnergyClosurePDNet(nn.Module):
+    r"""
+    Physics-closure-aware multitask model.
+
+    Key idea:
+    - Instead of directly regressing P_G1, predict network loss \hat{P}_loss >= 0
+      and recover slack generation via active-power closure:
+      P_G1 = P_load + \hat{P}_loss - P_G2 - P_G3.
+    - This reduces unconstrained regression freedom and enforces physically
+      consistent active-power balance by construction.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        n_state: int,
+        x_mean: np.ndarray,
+        x_std: np.ndarray,
+        state_mean: np.ndarray,
+        state_std: np.ndarray,
+        total_load_mw: float,
+        trunk_dims: Optional[Sequence[int]] = None,
+        cls_dims: Optional[Sequence[int]] = None,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        if n_state != len(CASE9_STATE_COLUMNS):
+            raise ValueError("EnergyClosurePDNet currently expects case9mod 22-state target")
+
+        trunk_dims = list(trunk_dims) if trunk_dims is not None else [384, 384, 256]
+        cls_dims = list(cls_dims) if cls_dims is not None else [192, 96]
+
+        feat_layers: List[nn.Module] = []
+        prev = input_dim
+        for h in trunk_dims:
+            feat_layers.extend(
+                [
+                    nn.Linear(prev, h),
+                    nn.LayerNorm(h),
+                    nn.SiLU(),
+                    nn.Dropout(dropout),
+                ]
+            )
+            prev = h
+        self.encoder = nn.Sequential(*feat_layers)
+        feat_dim = prev
+
+        cls_layers: List[nn.Module] = []
+        prev = feat_dim
+        for h in cls_dims:
+            cls_layers.extend([nn.Linear(prev, h), nn.SiLU(), nn.Dropout(dropout * 0.5)])
+            prev = h
+        cls_layers.append(nn.Linear(prev, 1))
+        self.cls_head = nn.Sequential(*cls_layers)
+
+        # Physics-structured state heads
+        self.loss_head = nn.Sequential(
+            nn.Linear(feat_dim, 128),
+            nn.SiLU(),
+            nn.Linear(128, 1),
+        )
+        self.q_head = nn.Sequential(
+            nn.Linear(feat_dim, 192),
+            nn.SiLU(),
+            nn.Linear(192, 3),
+        )
+        self.v_head = nn.Sequential(
+            nn.Linear(feat_dim, 192),
+            nn.SiLU(),
+            nn.Linear(192, 9),
+        )
+        self.theta_head = nn.Sequential(
+            nn.Linear(feat_dim, 192),
+            nn.SiLU(),
+            nn.Linear(192, 8),
+        )
+
+        # Register constants/buffers for differentiable denormalization
+        self.register_buffer("x_mean_t", torch.from_numpy(x_mean.astype(np.float32)).view(1, -1))
+        self.register_buffer("x_std_t", torch.from_numpy(x_std.astype(np.float32)).view(1, -1))
+        self.register_buffer("state_mean_t", torch.from_numpy(state_mean.astype(np.float32)).view(1, -1))
+        self.register_buffer("state_std_t", torch.from_numpy(state_std.astype(np.float32)).view(1, -1))
+        self.register_buffer("total_load_t", torch.tensor([float(total_load_mw)], dtype=torch.float32).view(1, 1))
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        feat = self.encoder(x)
+        logit = self.cls_head(feat).squeeze(-1)
+
+        # Inputs in physical MW
+        x_raw = x * self.x_std_t + self.x_mean_t
+        p2 = x_raw[:, 0:1]
+        p3 = x_raw[:, 1:2]
+
+        # Positive loss prediction (MW)
+        p_loss = F.softplus(self.loss_head(feat)) + 0.5
+        p1 = self.total_load_t + p_loss - p2 - p3
+
+        # Bound-aware outputs
+        q_raw = -5.0 + (300.0 + 5.0) * torch.sigmoid(self.q_head(feat))
+        v_raw = 0.9 + 0.2 * torch.sigmoid(self.v_head(feat))
+
+        theta_rest = self.theta_head(feat)
+        theta1 = torch.zeros((x.shape[0], 1), dtype=x.dtype, device=x.device)
+        theta_raw = torch.cat([theta1, theta_rest], dim=1)
+
+        state_raw = torch.cat([p1, q_raw, v_raw, theta_raw], dim=1)
+        state_norm = (state_raw - self.state_mean_t) / self.state_std_t
+        return logit, state_norm
+
+
+def build_state_weight_vector(
+    state_names: Sequence[str],
+    p1_weight: float = 3.0,
+    q_weight: float = 1.2,
+    v_weight: float = 1.0,
+    theta_weight: float = 1.0,
+) -> np.ndarray:
+    w = np.ones(len(state_names), dtype=np.float32)
+    for i, name in enumerate(state_names):
+        if name == "p1_mw":
+            w[i] = float(p1_weight)
+        elif name.startswith("q"):
+            w[i] = float(q_weight)
+        elif name.startswith("v"):
+            w[i] = float(v_weight)
+        elif name.startswith("theta"):
+            w[i] = float(theta_weight)
+    return w
+
+
+def _weighted_smooth_l1(pred: torch.Tensor, target: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    # SmoothL1 per output dimension with manual weighting.
+    diff = F.smooth_l1_loss(pred, target, reduction="none")
+    w = weights.view(1, -1)
+    return (diff * w).mean()
+
+
 def _compute_cls_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float) -> Dict[str, float]:
     pred = (probs > threshold).astype(np.int64)
     lab = labels.astype(np.int64)
@@ -357,9 +507,9 @@ def _compute_cls_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float
     spec = tn / (tn + fp + 1e-12)
     return {
         "acc": float(accuracy_score(lab, pred)),
-        "prec": float(precision_score(lab, pred, zero_division=0)),
-        "rec": float(recall_score(lab, pred, zero_division=0)),
-        "f1": float(f1_score(lab, pred, zero_division=0)),
+        "prec": float(precision_score(lab, pred, zero_division=0.0)),
+        "rec": float(recall_score(lab, pred, zero_division=0.0)),
+        "f1": float(f1_score(lab, pred, zero_division=0.0)),
         "spec": float(spec),
         "tp": tp,
         "tn": tn,
@@ -387,6 +537,7 @@ def _collect_predictions(
     device: torch.device,
 ) -> Dict[str, np.ndarray]:
     model.eval()
+    all_x_norm: List[np.ndarray] = []
     all_probs: List[np.ndarray] = []
     all_labels: List[np.ndarray] = []
     all_state_pred: List[np.ndarray] = []
@@ -399,6 +550,7 @@ def _collect_predictions(
             logits, state_pred = model(xb)
             probs = torch.sigmoid(logits)
 
+            all_x_norm.append(xb.cpu().numpy())
             all_probs.append(probs.cpu().numpy())
             all_labels.append(yb.numpy())
             all_state_pred.append(state_pred.cpu().numpy())
@@ -406,6 +558,7 @@ def _collect_predictions(
             all_mask.append(mb.numpy())
 
     return {
+        "x_norm": np.concatenate(all_x_norm, axis=0),
         "probs": np.concatenate(all_probs, axis=0),
         "labels": np.concatenate(all_labels, axis=0),
         "state_pred_norm": np.concatenate(all_state_pred, axis=0),
@@ -424,7 +577,9 @@ def train_full_state_model(
     weight_decay: float = 1e-4,
     lambda_state: float = 1.0,
     lambda_voltage: float = 0.05,
+    lambda_monotonic: float = 0.0,
     patience: int = 30,
+    state_weight: Optional[np.ndarray] = None,
 ) -> Dict:
     model = model.to(device)
 
@@ -442,12 +597,18 @@ def train_full_state_model(
     state_mean_t = torch.from_numpy(dataset.state_mean).to(device)
     state_std_t = torch.from_numpy(dataset.state_std).to(device)
     voltage_idx = [i for i, n in enumerate(dataset.state_names) if n.startswith("v") and n.endswith("_pu")]
+    x_std_t = torch.from_numpy(dataset.x_std).to(device)
+    if state_weight is None:
+        state_w_t = torch.ones(len(dataset.state_names), dtype=torch.float32, device=device)
+    else:
+        state_w_t = torch.from_numpy(state_weight.astype(np.float32)).to(device)
 
     history = {
         "train_total": [],
         "train_cls": [],
         "train_state": [],
         "train_voltage": [],
+        "train_mono": [],
         "val_total": [],
         "val_f1@0.5": [],
         "val_state_mae": [],
@@ -463,9 +624,12 @@ def train_full_state_model(
         ep_cls: List[float] = []
         ep_state: List[float] = []
         ep_v: List[float] = []
+        ep_mono: List[float] = []
 
         for xb, yb, sb, mb in train_loader:
             xb = xb.to(device)
+            if lambda_monotonic > 0:
+                xb.requires_grad_(True)
             yb = yb.to(device)
             sb = sb.to(device)
             mb = mb.to(device)
@@ -475,7 +639,7 @@ def train_full_state_model(
 
             has_state = mb > 0.5
             if has_state.any():
-                loss_state = F.smooth_l1_loss(state_pred[has_state], sb[has_state])
+                loss_state = _weighted_smooth_l1(state_pred[has_state], sb[has_state], state_w_t)
 
                 state_raw = state_pred[has_state] * state_std_t + state_mean_t
                 v_raw = state_raw[:, voltage_idx]
@@ -485,7 +649,29 @@ def train_full_state_model(
                 loss_state = torch.tensor(0.0, device=device)
                 loss_voltage = torch.tensor(0.0, device=device)
 
-            loss = loss_cls + lambda_state * loss_state + lambda_voltage * loss_voltage
+            loss_mono = torch.tensor(0.0, device=device)
+            if lambda_monotonic > 0:
+                # Monotonic prior: with fixed loads, slack P_G1 should decrease
+                # as either controllable generation (P_G2/P_G3) increases.
+                p1_raw_all = state_pred[:, 0] * state_std_t[0] + state_mean_t[0]
+                grad_all = torch.autograd.grad(
+                    p1_raw_all.sum(),
+                    xb,
+                    create_graph=True,
+                    retain_graph=True,
+                    allow_unused=False,
+                )[0]
+                # Convert d/dx_norm to d/dx_raw by dividing by std (>0, sign preserved)
+                dp1_dp2 = grad_all[:, 0] / (x_std_t[0] + 1e-12)
+                dp1_dp3 = grad_all[:, 1] / (x_std_t[1] + 1e-12)
+                loss_mono = F.relu(dp1_dp2 + 0.02).mean() + F.relu(dp1_dp3 + 0.02).mean()
+
+            loss = (
+                loss_cls
+                + lambda_state * loss_state
+                + lambda_voltage * loss_voltage
+                + lambda_monotonic * loss_mono
+            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -496,6 +682,7 @@ def train_full_state_model(
             ep_cls.append(float(loss_cls.item()))
             ep_state.append(float(loss_state.item()))
             ep_v.append(float(loss_voltage.item()))
+            ep_mono.append(float(loss_mono.item()))
 
         scheduler.step()
 
@@ -541,12 +728,14 @@ def train_full_state_model(
         train_cls = float(np.mean(ep_cls))
         train_state = float(np.mean(ep_state))
         train_v = float(np.mean(ep_v))
+        train_mono = float(np.mean(ep_mono))
         val_total_mean = float(np.mean(val_total))
 
         history["train_total"].append(train_total)
         history["train_cls"].append(train_cls)
         history["train_state"].append(train_state)
         history["train_voltage"].append(train_v)
+        history["train_mono"].append(train_mono)
         history["val_total"].append(val_total_mean)
         history["val_f1@0.5"].append(float(val_metrics["f1"]))
         history["val_state_mae"].append(val_state_mae)
@@ -555,7 +744,7 @@ def train_full_state_model(
             print(
                 f"Epoch {epoch+1:3d}/{epochs} | "
                 f"train={train_total:.4f} (cls={train_cls:.4f}, state={train_state:.4f}) | "
-                f"val={val_total_mean:.4f} | val_f1@0.5={val_metrics['f1']:.4f} | "
+                f"mono={train_mono:.4f} | val={val_total_mean:.4f} | val_f1@0.5={val_metrics['f1']:.4f} | "
                 f"val_state_mae={val_state_mae:.4f}"
             )
 
@@ -639,6 +828,48 @@ def evaluate_full_state_model(
     return {
         "classification": cls,
         "state": state_metrics,
+    }
+
+
+def evaluate_energy_consistency(
+    model: nn.Module,
+    loader: DataLoader,
+    dataset: Case9Dataset,
+    device: torch.device,
+) -> Dict[str, float]:
+    """
+    Evaluate active-power closure residual:
+    r_P = P_G1 + P_G2 + P_G3 - P_load - P_loss_true.
+
+    Here P_loss_true is estimated from traditional feasible states as
+    (P_G1 + P_G2 + P_G3 - P_load). For infeasible points, this metric is skipped.
+    """
+    pred = _collect_predictions(model, loader, device)
+    mask = pred["mask"] > 0.5
+    if not mask.any():
+        return {
+            "n_feasible_eval": 0,
+            "closure_abs_mean_mw": float("nan"),
+            "closure_abs_p95_mw": float("nan"),
+        }
+
+    x_raw = pred["x_norm"] * dataset.x_std + dataset.x_mean
+    state_pred_raw = pred["state_pred_norm"] * dataset.state_std + dataset.state_mean
+    state_true_raw = pred["state_true_norm"] * dataset.state_std + dataset.state_mean
+
+    p2 = x_raw[mask, 0]
+    p3 = x_raw[mask, 1]
+    p1_pred = state_pred_raw[mask, 0]
+    p1_true = state_true_raw[mask, 0]
+
+    p_loss_true = p1_true + p2 + p3 - dataset.total_load_mw
+    closure = p1_pred + p2 + p3 - dataset.total_load_mw - p_loss_true
+    abs_closure = np.abs(closure)
+
+    return {
+        "n_feasible_eval": int(mask.sum()),
+        "closure_abs_mean_mw": float(abs_closure.mean()),
+        "closure_abs_p95_mw": float(np.percentile(abs_closure, 95.0)),
     }
 
 

@@ -74,32 +74,7 @@
 % ─────────────────────────────────────────────────────────────────────────────
 \begin{abstract}
 % ─────────────────────────────────────────────────────────────────────────────
-Characterizing the static security region (SSR) in \emph{generator power
-space} is fundamental to online security assessment, preventive dispatch, and
-operating-margin analysis. The SSR is the set of generator active-power setpoints
-for which a voltage- and flow-secure AC solution exists under fixed loading.
-For the multi-solution benchmark cases of Bukhsh et al., this set is strongly
-nonconvex and may split into disconnected secure components, making dense
-nonlinear-feasibility scanning computationally expensive.
-
-We propose \textbf{SSR-PDNet}, a physics-informed neural framework that learns the
-static security region together with internal operating-state structure. The model combines
-(i)~a shared encoder operating directly on generator dispatch coordinates,
-(ii)~a security head for boundary discrimination, and (iii)~a physics head that
-regularizes the learned representation with voltage-state information through
-primal-dual training. This design preserves the correct coordinate-space
-interpretation while improving boundary sharpness near disconnected secure
-components.
-
-Experiments on WB2, WB5, LMBM3, and case9mod show that SSR-PDNet accurately
-reproduces the benchmark static security regions obtained from traditional feasibility
-scanning. On the larger multi-component cases, SSR-PDNet attains \textbf{F1 = 0.9671}
-on WB5 and \textbf{F1 = 0.9716} on case9mod while recovering the two- and
-three-component secure-set topology, respectively. On WB2 and LMBM3, the paper
-further visualizes voltage, reactive-power, redispatch, and bifurcation-related
-quantities inside the secure operating set, showing that the framework is not
-limited to binary classification but supports physically interpretable security
-region analysis.
+We study static security region (SSR) learning in the correct \emph{generator power space}, where the multi-solution Bukhsh benchmark cases exhibit disconnected and highly nonconvex secure sets that are expensive to obtain by dense nonlinear feasibility scanning. We propose an enhanced physics-informed framework centered on SSR-PDNet and an energy-closure full-state surrogate (EC-PDNet), which jointly predicts security membership and internal operating states while embedding active-power balance into the network parameterization. Across WB2, WB5, LMBM3, and case9mod, the method preserves the benchmark SSR topology and delivers high classification accuracy (e.g., F1=0.9671 on WB5 and F1=0.9716 on case9mod), while the structured full-state model substantially improves slack-power fidelity on case9mod (test $P_{G1}$ MAE reduced from 0.8595 MW to 0.1304 MW) and lowers overall state error, demonstrating a practical path from boundary classification toward fast, physics-consistent surrogate replacement of pointwise traditional solves.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -168,31 +143,11 @@ because the SSR may be small, irregular, or have non-trivial topology.
 This paper makes the following contributions:
 
 \begin{enumerate}
-  \item We formulate static security region characterization as binary
-    classification in \emph{generator power space} $(P_{G2},\ldots,P_{Gn_g})$
-    with loads fixed at nominal values, matching the traditional nonlinear-feasibility scanning
-    procedure of Bukhsh et al.\ exactly. This coordinate choice is essential for
-    preserving disconnected secure components.
+  \item \textbf{Coordinate-correct SSR learning framework.} We formulate SSR characterization strictly in generator power space (loads fixed), so the learned model targets the same object as traditional scanning and can recover disconnected secure components.
 
-  \item We propose \textbf{SSR-PDNet}, a physics-informed neural architecture with
-    a shared encoder, a security discrimination head, and a physics head for
-    internal-state regularization. The training objective combines focal loss,
-    contrastive boundary sharpening, and primal-dual voltage penalties.
+  \item \textbf{Physics-structured full-state surrogate.} Beyond boundary classification, we introduce an energy-closure parameterization (EC-PDNet) that embeds active-power balance into network outputs and jointly predicts security and internal OPF states.
 
-  \item We enrich the benchmark study beyond classification by visualizing
-    secure-point internal states and local point-cloud structure. In WB2 and
-    LMBM3, the learned static security region is linked to voltage profiles,
-    reactive power, slack redispatch, and dual-solution structure. In WB5 and
-    case9mod, boundary-focused zoom figures reveal local point arrangement and
-    density heterogeneity that shape boundary formation.
-
-  \item We conduct systematic experiments on all Bukhsh multi-solution cases.
-    SSR-PDNet reproduces both disconnected components of WB5 (F1=0.9671) and all
-    three components of case9mod (F1=0.9716), while the redesigned figures also
-    show secure-set redispatch and voltage-margin patterns.
-
-  \item All code, data pipelines (nonlinear-solver and traditional CSV), trained
-    models, and visualization tools are released as open source.
+  \item \textbf{Benchmark-level evidence and open reproducibility.} On WB2/WB5/LMBM3/case9mod we show accurate topology recovery and strong quantitative performance, with marked slack-power improvement on case9mod (0.8595\,$\rightarrow$\,0.1304 MW MAE), and release code, pipelines, and artifacts for full reproduction.
 \end{enumerate}
 
 The remainder of the paper is organized as follows.
@@ -719,6 +674,21 @@ $\{P_{G1},Q_{G1:3},V_{1:9},\theta_{1:9}\}$. This model uses the same
 traditional samples and reports pointwise state errors only on feasible
 operating points where traditional state labels exist.
 
+\textbf{From regression to physics-structured state recovery.}
+To improve the most sensitive state variable $P_{G1}$ (slack active power), we
+introduce an \emph{energy-closure parameterization}: instead of directly
+regressing $P_{G1}$, the network predicts nonnegative active-loss
+$\hat{P}_{\mathrm{loss}}$ and reconstructs
+\begin{equation}
+\hat{P}_{G1} = P_{\mathrm{load}} + \hat{P}_{\mathrm{loss}} - P_{G2} - P_{G3}.
+\label{eq:energy_closure}
+\end{equation}
+This embeds active-power balance into the architecture and reduces unconstrained
+regression degrees of freedom. We further use (i) grouped state-head outputs
+with range-aware mappings for $Q$ and $V$, and (ii) a monotonic prior on the
+slack response ($\partial \hat{P}_{G1}/\partial P_{G2} \le 0$,
+$\partial \hat{P}_{G1}/\partial P_{G3} \le 0$) as an additional regularizer.
+
 \begin{table}[!t]
   \centering
   \caption{Test Set Classification Performance (Generator Power Space vs.\ Traditional Ground Truth)}
@@ -859,25 +829,30 @@ structure behind each secure point.
   \label{tab:fullstate}
   \begin{tabular}{lcc}
     \toprule
-    Metric & Validation & Test \\
+    Metric & Baseline FullState-PDNet (Test) & Energy-Closure PDNet (Test) \\
     \midrule
-    Classification Acc & 0.9945 & 0.9915 \\
-    Classification F1 & 0.9891 & 0.9831 \\
-    Precision / Recall & 0.9785 / 1.0000 & 0.9737 / 0.9927 \\
-    State MAE (overall) & 0.0914 & 0.0949 \\
-    MAE: $P_{G1}$ (MW) & 0.8552 & 0.8366 \\
-    MAE: $Q_{G1:3}$ (MVAR) & 0.1323 & 0.1588 \\
-    MAE: $V_{1:9}$ (p.u.) & 0.0009 & 0.0010 \\
-    MAE: $\theta_{1:9}$ (deg) & 0.0833 & 0.0850 \\
+    Classification Acc & 0.9921 & 0.9909 \\
+    Classification F1 & 0.9841 & 0.9817 \\
+    Precision / Recall & 0.9853 / 0.9829 & 0.9805 / 0.9829 \\
+    State MAE (overall) & 0.0994 & \textbf{0.0825} \\
+    MAE: $P_{G1}$ (MW) & 0.8595 & \textbf{0.1304} \\
+    MAE: $Q_{G1:3}$ (MVAR) & \textbf{0.1614} & 0.1894 \\
+    MAE: $V_{1:9}$ (p.u.) & \textbf{0.0010} & 0.0012 \\
+    MAE: $\theta_{1:9}$ (deg) & \textbf{0.0928} & 0.1228 \\
+    Power-closure abs. error (MW) & 0.8595 & \textbf{0.1304} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \textbf{Pointwise state comparison.}
-Representative points are listed in the released comparison file
-\texttt{results/case9mod\_fullstate\_point\_comparison.csv}, where each row
+Representative points are listed in the released comparison files,
+where each row
 contains input dispatch, traditional feasibility label, surrogate probability,
 predicted states, traditional states, and grouped MAE statistics.
+
+In our implementation, two pointwise CSV files are released for direct
+inspection: \texttt{results/case9mod\_fullstate\_pdnet\_point\_comparison.csv}
+and \texttt{results/case9mod\_fullstate\_ecpd\_point\_comparison.csv}.
 
 \subsection{Training Dynamics}
 

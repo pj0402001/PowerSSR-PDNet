@@ -1,0 +1,110 @@
+[
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 179.0,
+      "PG5": 324.0
+    },
+    "traditional_secure": 1,
+    "model_prob_secure": 0.9526325464248657,
+    "threshold": 0.77,
+    "model_secure": 1,
+    "agreement": 1,
+    "state_mae_overall": 0.00010005673539126292,
+    "state_pred": {
+      "loss": 0.00010005673539126292
+    },
+    "state_true": {
+      "loss": 0.0
+    }
+  },
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 580.0,
+      "PG5": 49.0
+    },
+    "traditional_secure": 1,
+    "model_prob_secure": 0.9168684482574463,
+    "threshold": 0.77,
+    "model_secure": 1,
+    "agreement": 1,
+    "state_mae_overall": 0.0001000614938675426,
+    "state_pred": {
+      "loss": 0.0001000614938675426
+    },
+    "state_true": {
+      "loss": 0.0
+    }
+  },
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 178.0,
+      "PG5": 289.0
+    },
+    "traditional_secure": 1,
+    "model_prob_secure": 0.9673983454704285,
+    "threshold": 0.77,
+    "model_secure": 1,
+    "agreement": 1,
+    "state_mae_overall": 0.00010006325464928523,
+    "state_pred": {
+      "loss": 0.00010006325464928523
+    },
+    "state_true": {
+      "loss": 0.0
+    }
+  },
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 545.5,
+      "PG5": 106.0
+    },
+    "traditional_secure": 0,
+    "model_prob_secure": 1.4900335132406184e-10,
+    "threshold": 0.77,
+    "model_secure": 0,
+    "agreement": 1,
+    "state_mae_overall": null,
+    "state_pred": {
+      "loss": 0.00010000336624216288
+    },
+    "state_true": null
+  },
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 530.0,
+      "PG5": 318.0
+    },
+    "traditional_secure": 0,
+    "model_prob_secure": 3.967118699028413e-23,
+    "threshold": 0.77,
+    "model_secure": 0,
+    "agreement": 1,
+    "state_mae_overall": null,
+    "state_pred": {
+      "loss": 0.00020361802307888865
+    },
+    "state_true": null
+  },
+  {
+    "case": "WB5",
+    "input": {
+      "PG1": 526.0,
+      "PG5": 373.0
+    },
+    "traditional_secure": 0,
+    "model_prob_secure": 2.4785731075537035e-25,
+    "threshold": 0.77,
+    "model_secure": 0,
+    "agreement": 1,
+    "state_mae_overall": null,
+    "state_pred": {
+      "loss": 0.00010016399755841121
+    },
+    "state_true": null
+  }
+]

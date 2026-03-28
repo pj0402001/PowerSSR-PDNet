@@ -24,9 +24,12 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from state_surrogate import (  # noqa: E402
+    EnergyClosurePDNet,
     FullStatePDNet,
     build_case9mod_dataset,
+    build_state_weight_vector,
     compare_points,
+    evaluate_energy_consistency,
     evaluate_full_state_model,
     export_checkpoint,
     make_dataloaders,
@@ -83,6 +86,15 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lambda-state", type=float, default=1.0)
     parser.add_argument("--lambda-voltage", type=float, default=0.05)
+    parser.add_argument("--lambda-monotonic", type=float, default=0.0)
+    parser.add_argument("--p1-weight", type=float, default=3.0)
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="baseline",
+        choices=["baseline", "energy_closure"],
+        help="Model architecture: baseline full-state head or energy-closure head",
+    )
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument(
         "--point",
@@ -110,7 +122,28 @@ def main():
     split = split_indices(dataset.y_cls, seed=args.seed)
     loaders = make_dataloaders(dataset, split, batch_size=args.batch_size)
 
-    model = FullStatePDNet(input_dim=2, n_state=len(dataset.state_names), dropout=0.1)
+    if args.arch == "energy_closure":
+        model = EnergyClosurePDNet(
+            input_dim=2,
+            n_state=len(dataset.state_names),
+            x_mean=dataset.x_mean,
+            x_std=dataset.x_std,
+            state_mean=dataset.state_mean,
+            state_std=dataset.state_std,
+            total_load_mw=dataset.total_load_mw,
+            dropout=0.1,
+        )
+    else:
+        model = FullStatePDNet(input_dim=2, n_state=len(dataset.state_names), dropout=0.1)
+
+    state_w = build_state_weight_vector(
+        dataset.state_names,
+        p1_weight=args.p1_weight,
+        q_weight=1.2,
+        v_weight=1.0,
+        theta_weight=1.0,
+    )
+
     print("Training full-state surrogate...")
     history = train_full_state_model(
         model=model,
@@ -121,6 +154,8 @@ def main():
         lr=args.lr,
         lambda_state=args.lambda_state,
         lambda_voltage=args.lambda_voltage,
+        lambda_monotonic=args.lambda_monotonic,
+        state_weight=state_w,
     )
 
     best_threshold = float(history["best_threshold"])
@@ -128,6 +163,8 @@ def main():
 
     val_eval = evaluate_full_state_model(model, loaders["val"], dataset, device, best_threshold)
     test_eval = evaluate_full_state_model(model, loaders["test"], dataset, device, best_threshold)
+    val_energy = evaluate_energy_consistency(model, loaders["val"], dataset, device)
+    test_energy = evaluate_energy_consistency(model, loaders["test"], dataset, device)
 
     # Pointwise report: sampled demo + user custom points
     demo_points = sample_demo_points(dataset, seed=args.seed, n_each=3)
@@ -149,23 +186,32 @@ def main():
         "train": {
             "epochs_run": int(len(history["train_total"])),
             "best_threshold": best_threshold,
+            "arch": args.arch,
+            "lambda_monotonic": float(args.lambda_monotonic),
+            "p1_weight": float(args.p1_weight),
             "history_tail": {
                 "train_total": history["train_total"][-5:],
                 "val_total": history["val_total"][-5:],
                 "val_f1@0.5": history["val_f1@0.5"][-5:],
                 "val_state_mae": history["val_state_mae"][-5:],
+                "train_mono": history.get("train_mono", [])[-5:],
             },
         },
         "validation": val_eval,
         "test": test_eval,
+        "energy_consistency": {
+            "validation": val_energy,
+            "test": test_energy,
+        },
     }
 
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
 
-    ckpt_path = results_dir / "case9mod_fullstate_pdnet.pth"
-    metrics_path = results_dir / "case9mod_fullstate_metrics.json"
-    points_path = results_dir / "case9mod_fullstate_point_comparison.json"
+    suffix = "ecpd" if args.arch == "energy_closure" else "pdnet"
+    ckpt_path = results_dir / f"case9mod_fullstate_{suffix}.pth"
+    metrics_path = results_dir / f"case9mod_fullstate_{suffix}_metrics.json"
+    points_path = results_dir / f"case9mod_fullstate_{suffix}_point_comparison.json"
 
     export_checkpoint(model, dataset, ckpt_path)
     with open(metrics_path, "w", encoding="utf-8") as f:
