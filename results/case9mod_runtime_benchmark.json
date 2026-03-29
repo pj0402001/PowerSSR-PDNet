@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "case": "case9mod",
+    "n_points": 2735,
+    "device": "cpu",
+    "torch_version": "2.8.0+cpu",
+    "python_version": "3.12.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "threads": 24,
+    "ckpt": "D:\\安全域\\PowerSSR-DL\\results\\case9mod_fullstate_ecpd.pth",
+    "traditional_csv": "D:\\安全域\\1\\ac_opf_9results.csv",
+    "notes": [
+      "Traditional timing uses calculation_time from CSV (feasible points in traditional scan output).",
+      "DL timing excludes model loading and data I/O; only forward inference is measured."
+    ]
+  },
+  "traditional": {
+    "n": 2735,
+    "mean_s": 0.06210335185802393,
+    "median_s": 0.0585286617279052,
+    "p95_s": 0.08982219696044916,
+    "min_s": 0.0507888793945312,
+    "max_s": 0.152294635772705,
+    "sum_s": 169.85266733169544
+  },
+  "ecpd_inference": {
+    "single_point": {
+      "n_points": 2735,
+      "batch_size": 1,
+      "repeats": 10,
+      "warmup": 3,
+      "total_mean_s": 1.5045111899264156,
+      "total_std_s": 0.016285128638716524,
+      "total_min_s": 1.4750612997449934,
+      "total_max_s": 1.53154579969123,
+      "per_point_mean_ms": 0.5500954990590186,
+      "throughput_points_per_s": 1817.8661736199958
+    },
+    "batched": {
+      "n_points": 2735,
+      "batch_size": 1024,
+      "repeats": 10,
+      "warmup": 3,
+      "total_mean_s": 0.008465810026973487,
+      "total_std_s": 0.00012592006957199756,
+      "total_min_s": 0.008257700130343437,
+      "total_max_s": 0.008755200076848269,
+      "per_point_mean_ms": 0.00309536015611462,
+      "throughput_points_per_s": 323064.18302393187
+    }
+  },
+  "speedup": {
+    "traditional_vs_single_point": 112.89558261112221,
+    "traditional_vs_batched": 20063.368631060282
+  }
+}
