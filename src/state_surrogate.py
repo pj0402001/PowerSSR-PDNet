@@ -73,6 +73,21 @@ def _safe_std(x: np.ndarray, axis: int = 0) -> np.ndarray:
     return s
 
 
+def _neighbor_count_8(mask: np.ndarray) -> np.ndarray:
+    m = mask.astype(np.int16)
+    p = np.pad(m, 1, mode="constant", constant_values=0)
+    return (
+        p[:-2, :-2]
+        + p[:-2, 1:-1]
+        + p[:-2, 2:]
+        + p[1:-1, :-2]
+        + p[1:-1, 2:]
+        + p[2:, :-2]
+        + p[2:, 1:-1]
+        + p[2:, 2:]
+    )
+
+
 @dataclass
 class Case9Dataset:
     X_raw: np.ndarray
@@ -81,6 +96,7 @@ class Case9Dataset:
     y_state_raw: np.ndarray
     y_state_norm: np.ndarray
     state_mask: np.ndarray
+    boundary_mask: np.ndarray
     state_names: List[str]
     x_mean: np.ndarray
     x_std: np.ndarray
@@ -110,7 +126,7 @@ def load_case9mod_traditional(data_dir: Path) -> pd.DataFrame:
 def build_case9mod_dataset(
     data_dir: Path,
     seed: int = 42,
-    bg_multiplier: float = 2.0,
+    bg_multiplier: float = 6.0,
     n_guard_max: int = 3000,
 ) -> Case9Dataset:
     """
@@ -145,21 +161,56 @@ def build_case9mod_dataset(
 
     secure_mask_2d = np.zeros((len(p3_grid), len(p2_grid)), dtype=bool)
     secure_mask_2d[iy, ix] = True
+    secure_neighbor_cnt = _neighbor_count_8(secure_mask_2d)
+    insecure_neighbor_cnt = _neighbor_count_8(~secure_mask_2d)
+    boundary_secure_mask = secure_mask_2d & (insecure_neighbor_cnt > 0)
+    boundary_insecure_mask = (~secure_mask_2d) & (secure_neighbor_cnt > 0)
 
     # Feasible set with state labels
     X_feas = np.column_stack([p2_grid[ix], p3_grid[iy]]).astype(np.float32)
     Y_feas_state = df[CASE9_STATE_COLUMNS].to_numpy(dtype=np.float32)
     y_feas = np.ones(len(X_feas), dtype=np.float32)
+    boundary_feas = boundary_secure_mask[iy, ix].astype(np.float32)
 
     secure_lookup: Dict[Tuple[int, int], np.ndarray] = {
         (int(i), int(j)): state.astype(np.float32)
         for i, j, state in zip(ix, iy, Y_feas_state)
     }
 
-    # Infeasible from lattice complement
+    # Infeasible from lattice complement (boundary-prioritized sampling)
     insecure_idx = np.argwhere(~secure_mask_2d)
+    boundary_insecure_idx = np.argwhere(boundary_insecure_mask)
+    interior_insecure_idx = np.argwhere((~secure_mask_2d) & (~boundary_insecure_mask))
+
     n_bg = min(int(len(X_feas) * bg_multiplier), len(insecure_idx))
-    pick = insecure_idx[rng.choice(len(insecure_idx), size=n_bg, replace=False)]
+    n_bg_boundary = min(len(boundary_insecure_idx), n_bg)
+
+    picked_parts: List[np.ndarray] = []
+    picked_boundary_flags: List[np.ndarray] = []
+    if n_bg_boundary > 0:
+        if n_bg_boundary == len(boundary_insecure_idx):
+            pick_bd = boundary_insecure_idx
+        else:
+            take_bd = rng.choice(len(boundary_insecure_idx), size=n_bg_boundary, replace=False)
+            pick_bd = boundary_insecure_idx[take_bd]
+        picked_parts.append(pick_bd)
+        picked_boundary_flags.append(np.ones(len(pick_bd), dtype=np.float32))
+
+    n_rest = n_bg - n_bg_boundary
+    if n_rest > 0 and len(interior_insecure_idx) > 0:
+        n_take = min(n_rest, len(interior_insecure_idx))
+        take_in = rng.choice(len(interior_insecure_idx), size=n_take, replace=False)
+        pick_in = interior_insecure_idx[take_in]
+        picked_parts.append(pick_in)
+        picked_boundary_flags.append(np.zeros(len(pick_in), dtype=np.float32))
+
+    if picked_parts:
+        pick = np.vstack(picked_parts).astype(int)
+        boundary_bg = np.concatenate(picked_boundary_flags).astype(np.float32)
+    else:
+        pick = np.zeros((0, 2), dtype=int)
+        boundary_bg = np.zeros((0,), dtype=np.float32)
+
     X_bg = np.column_stack([p2_grid[pick[:, 1]], p3_grid[pick[:, 0]]]).astype(np.float32)
 
     # Domain-guard negatives below lower active-power bounds
@@ -180,10 +231,17 @@ def build_case9mod_dataset(
 
     X_infeas = np.vstack([X_bg, X_guard]).astype(np.float32)
     y_infeas = np.zeros(len(X_infeas), dtype=np.float32)
+    boundary_infeas = np.concatenate(
+        [
+            boundary_bg,
+            np.zeros(len(X_guard), dtype=np.float32),
+        ]
+    ).astype(np.float32)
 
     # Assemble multitask arrays
     X_raw = np.vstack([X_feas, X_infeas]).astype(np.float32)
     y_cls = np.concatenate([y_feas, y_infeas]).astype(np.float32)
+    boundary_mask = np.concatenate([boundary_feas, boundary_infeas]).astype(np.float32)
 
     n_state = len(CASE9_STATE_COLUMNS)
     y_state_raw = np.zeros((len(X_raw), n_state), dtype=np.float32)
@@ -209,6 +267,7 @@ def build_case9mod_dataset(
         y_state_raw=y_state_raw,
         y_state_norm=y_state_norm,
         state_mask=state_mask,
+        boundary_mask=boundary_mask,
         state_names=list(CASE9_STATE_COLUMNS),
         x_mean=x_mean,
         x_std=x_std,
@@ -252,17 +311,19 @@ class MultiTaskDataset(Dataset):
         y_cls: np.ndarray,
         y_state_norm: np.ndarray,
         state_mask: np.ndarray,
+        boundary_mask: np.ndarray,
     ):
         self.X = torch.from_numpy(X_norm.astype(np.float32))
         self.y_cls = torch.from_numpy(y_cls.astype(np.float32))
         self.y_state = torch.from_numpy(y_state_norm.astype(np.float32))
         self.mask = torch.from_numpy(state_mask.astype(np.float32))
+        self.boundary = torch.from_numpy(boundary_mask.astype(np.float32))
 
     def __len__(self) -> int:
         return len(self.X)
 
     def __getitem__(self, idx: int):
-        return self.X[idx], self.y_cls[idx], self.y_state[idx], self.mask[idx]
+        return self.X[idx], self.y_cls[idx], self.y_state[idx], self.mask[idx], self.boundary[idx]
 
 
 def make_dataloaders(
@@ -277,6 +338,7 @@ def make_dataloaders(
             dataset.y_cls[ids],
             dataset.y_state_norm[ids],
             dataset.state_mask[ids],
+            dataset.boundary_mask[ids],
         )
         loaders[name] = DataLoader(
             ds,
@@ -543,9 +605,10 @@ def _collect_predictions(
     all_state_pred: List[np.ndarray] = []
     all_state_true: List[np.ndarray] = []
     all_mask: List[np.ndarray] = []
+    all_boundary: List[np.ndarray] = []
 
     with torch.no_grad():
-        for xb, yb, sb, mb in loader:
+        for xb, yb, sb, mb, bb in loader:
             xb = xb.to(device)
             logits, state_pred = model(xb)
             probs = torch.sigmoid(logits)
@@ -556,6 +619,7 @@ def _collect_predictions(
             all_state_pred.append(state_pred.cpu().numpy())
             all_state_true.append(sb.numpy())
             all_mask.append(mb.numpy())
+            all_boundary.append(bb.numpy())
 
     return {
         "x_norm": np.concatenate(all_x_norm, axis=0),
@@ -564,6 +628,7 @@ def _collect_predictions(
         "state_pred_norm": np.concatenate(all_state_pred, axis=0),
         "state_true_norm": np.concatenate(all_state_true, axis=0),
         "mask": np.concatenate(all_mask, axis=0),
+        "boundary": np.concatenate(all_boundary, axis=0),
     }
 
 
@@ -578,6 +643,13 @@ def train_full_state_model(
     lambda_state: float = 1.0,
     lambda_voltage: float = 0.05,
     lambda_monotonic: float = 0.0,
+    lambda_polar: float = 0.25,
+    lambda_hard_neg: float = 0.35,
+    hard_neg_th: float = 0.20,
+    lambda_hard_pos: float = 0.15,
+    hard_pos_floor: float = 0.80,
+    boundary_weight: float = 1.5,
+    boundary_hard_neg_boost: float = 2.0,
     patience: int = 30,
     state_weight: Optional[np.ndarray] = None,
 ) -> Dict:
@@ -590,7 +662,7 @@ def train_full_state_model(
     n_neg = float(dataset.y_cls[dataset.y_cls <= 0.5].shape[0])
     pos_weight = torch.tensor([max(n_neg / max(n_pos, 1.0), 1.0)], dtype=torch.float32, device=device)
 
-    loss_cls_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    loss_cls_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.05)
 
@@ -606,6 +678,9 @@ def train_full_state_model(
     history = {
         "train_total": [],
         "train_cls": [],
+        "train_polar": [],
+        "train_hard_neg": [],
+        "train_hard_pos": [],
         "train_state": [],
         "train_voltage": [],
         "train_mono": [],
@@ -622,20 +697,44 @@ def train_full_state_model(
         model.train()
         ep_total: List[float] = []
         ep_cls: List[float] = []
+        ep_polar: List[float] = []
+        ep_hard_neg: List[float] = []
+        ep_hard_pos: List[float] = []
         ep_state: List[float] = []
         ep_v: List[float] = []
         ep_mono: List[float] = []
 
-        for xb, yb, sb, mb in train_loader:
+        for xb, yb, sb, mb, bb in train_loader:
             xb = xb.to(device)
             if lambda_monotonic > 0:
                 xb.requires_grad_(True)
             yb = yb.to(device)
             sb = sb.to(device)
             mb = mb.to(device)
+            bb = bb.to(device)
 
             logits, state_pred = model(xb)
-            loss_cls = loss_cls_fn(logits, yb)
+            probs = torch.sigmoid(logits)
+
+            cls_raw = loss_cls_fn(logits, yb)
+            cls_w = 1.0 + boundary_weight * bb
+            loss_cls = (cls_raw * cls_w).mean()
+
+            polar_raw = (1.0 - yb) * (probs ** 2) + yb * ((1.0 - probs) ** 2)
+            loss_polar = (polar_raw * cls_w).mean()
+
+            hard_neg = (yb < 0.5) & (probs > hard_neg_th)
+            if hard_neg.any():
+                hn_w = 1.0 + boundary_hard_neg_boost * bb[hard_neg]
+                loss_hard_neg = (((probs[hard_neg] - hard_neg_th) ** 2) * hn_w).mean()
+            else:
+                loss_hard_neg = torch.tensor(0.0, device=device)
+
+            hard_pos = (yb > 0.5) & (probs < hard_pos_floor)
+            if hard_pos.any():
+                loss_hard_pos = ((hard_pos_floor - probs[hard_pos]) ** 2).mean()
+            else:
+                loss_hard_pos = torch.tensor(0.0, device=device)
 
             has_state = mb > 0.5
             if has_state.any():
@@ -668,6 +767,9 @@ def train_full_state_model(
 
             loss = (
                 loss_cls
+                + lambda_polar * loss_polar
+                + lambda_hard_neg * loss_hard_neg
+                + lambda_hard_pos * loss_hard_pos
                 + lambda_state * loss_state
                 + lambda_voltage * loss_voltage
                 + lambda_monotonic * loss_mono
@@ -680,6 +782,9 @@ def train_full_state_model(
 
             ep_total.append(float(loss.item()))
             ep_cls.append(float(loss_cls.item()))
+            ep_polar.append(float(loss_polar.item()))
+            ep_hard_neg.append(float(loss_hard_neg.item()))
+            ep_hard_pos.append(float(loss_hard_pos.item()))
             ep_state.append(float(loss_state.item()))
             ep_v.append(float(loss_voltage.item()))
             ep_mono.append(float(loss_mono.item()))
@@ -690,14 +795,35 @@ def train_full_state_model(
         model.eval()
         val_total: List[float] = []
         with torch.no_grad():
-            for xb, yb, sb, mb in val_loader:
+            for xb, yb, sb, mb, bb in val_loader:
                 xb = xb.to(device)
                 yb = yb.to(device)
                 sb = sb.to(device)
                 mb = mb.to(device)
+                bb = bb.to(device)
 
                 logits, state_pred = model(xb)
-                loss_cls = loss_cls_fn(logits, yb)
+                probs = torch.sigmoid(logits)
+
+                cls_raw = loss_cls_fn(logits, yb)
+                cls_w = 1.0 + boundary_weight * bb
+                loss_cls = (cls_raw * cls_w).mean()
+
+                polar_raw = (1.0 - yb) * (probs ** 2) + yb * ((1.0 - probs) ** 2)
+                loss_polar = (polar_raw * cls_w).mean()
+
+                hard_neg = (yb < 0.5) & (probs > hard_neg_th)
+                if hard_neg.any():
+                    hn_w = 1.0 + boundary_hard_neg_boost * bb[hard_neg]
+                    loss_hard_neg = (((probs[hard_neg] - hard_neg_th) ** 2) * hn_w).mean()
+                else:
+                    loss_hard_neg = torch.tensor(0.0, device=device)
+
+                hard_pos = (yb > 0.5) & (probs < hard_pos_floor)
+                if hard_pos.any():
+                    loss_hard_pos = ((hard_pos_floor - probs[hard_pos]) ** 2).mean()
+                else:
+                    loss_hard_pos = torch.tensor(0.0, device=device)
 
                 has_state = mb > 0.5
                 if has_state.any():
@@ -710,7 +836,14 @@ def train_full_state_model(
                     loss_state = torch.tensor(0.0, device=device)
                     loss_voltage = torch.tensor(0.0, device=device)
 
-                loss = loss_cls + lambda_state * loss_state + lambda_voltage * loss_voltage
+                loss = (
+                    loss_cls
+                    + lambda_polar * loss_polar
+                    + lambda_hard_neg * loss_hard_neg
+                    + lambda_hard_pos * loss_hard_pos
+                    + lambda_state * loss_state
+                    + lambda_voltage * loss_voltage
+                )
                 val_total.append(float(loss.item()))
 
         val_pred = _collect_predictions(model, val_loader, device)
@@ -726,6 +859,9 @@ def train_full_state_model(
 
         train_total = float(np.mean(ep_total))
         train_cls = float(np.mean(ep_cls))
+        train_polar = float(np.mean(ep_polar))
+        train_hard_neg = float(np.mean(ep_hard_neg))
+        train_hard_pos = float(np.mean(ep_hard_pos))
         train_state = float(np.mean(ep_state))
         train_v = float(np.mean(ep_v))
         train_mono = float(np.mean(ep_mono))
@@ -733,6 +869,9 @@ def train_full_state_model(
 
         history["train_total"].append(train_total)
         history["train_cls"].append(train_cls)
+        history["train_polar"].append(train_polar)
+        history["train_hard_neg"].append(train_hard_neg)
+        history["train_hard_pos"].append(train_hard_pos)
         history["train_state"].append(train_state)
         history["train_voltage"].append(train_v)
         history["train_mono"].append(train_mono)
@@ -743,7 +882,8 @@ def train_full_state_model(
         if (epoch + 1) % 10 == 0:
             print(
                 f"Epoch {epoch+1:3d}/{epochs} | "
-                f"train={train_total:.4f} (cls={train_cls:.4f}, state={train_state:.4f}) | "
+                f"train={train_total:.4f} (cls={train_cls:.4f}, polar={train_polar:.4f}, "
+                f"hardneg={train_hard_neg:.4f}, hardpos={train_hard_pos:.4f}, state={train_state:.4f}) | "
                 f"mono={train_mono:.4f} | val={val_total_mean:.4f} | val_f1@0.5={val_metrics['f1']:.4f} | "
                 f"val_state_mae={val_state_mae:.4f}"
             )
@@ -778,6 +918,43 @@ def evaluate_full_state_model(
     pred = _collect_predictions(model, loader, device)
     cls = _compute_cls_metrics(pred["probs"], pred["labels"], threshold=threshold)
     cls["best_threshold"] = float(threshold)
+
+    probs = pred["probs"].astype(np.float64)
+    labels = pred["labels"].astype(np.int64)
+    boundary = pred.get("boundary", np.zeros_like(labels, dtype=np.float32)) > 0.5
+
+    pos = probs[labels == 1]
+    neg = probs[labels == 0]
+
+    def _q(arr: np.ndarray, q: float) -> float:
+        if arr.size == 0:
+            return float("nan")
+        return float(np.percentile(arr, q))
+
+    prob_stats = {
+        "pos_mean": float(pos.mean()) if pos.size else float("nan"),
+        "pos_p05": _q(pos, 5.0),
+        "pos_p50": _q(pos, 50.0),
+        "pos_p95": _q(pos, 95.0),
+        "pos_lt_0p5": float((pos < 0.5).mean()) if pos.size else float("nan"),
+        "neg_mean": float(neg.mean()) if neg.size else float("nan"),
+        "neg_p50": _q(neg, 50.0),
+        "neg_p95": _q(neg, 95.0),
+        "neg_p99": _q(neg, 99.0),
+        "neg_gt_0p2": float((neg > 0.2).mean()) if neg.size else float("nan"),
+        "neg_gt_0p5": float((neg > 0.5).mean()) if neg.size else float("nan"),
+    }
+
+    neg_boundary = probs[(labels == 0) & boundary]
+    neg_interior = probs[(labels == 0) & (~boundary)]
+    prob_stats["neg_boundary_n"] = int(neg_boundary.size)
+    prob_stats["neg_boundary_mean"] = float(neg_boundary.mean()) if neg_boundary.size else float("nan")
+    prob_stats["neg_boundary_p95"] = _q(neg_boundary, 95.0)
+    prob_stats["neg_boundary_gt_0p5"] = float((neg_boundary > 0.5).mean()) if neg_boundary.size else float("nan")
+    prob_stats["neg_interior_n"] = int(neg_interior.size)
+    prob_stats["neg_interior_mean"] = float(neg_interior.mean()) if neg_interior.size else float("nan")
+    prob_stats["neg_interior_p95"] = _q(neg_interior, 95.0)
+    prob_stats["neg_interior_gt_0p5"] = float((neg_interior > 0.5).mean()) if neg_interior.size else float("nan")
 
     mask = pred["mask"] > 0.5
     if mask.any():
@@ -827,6 +1004,7 @@ def evaluate_full_state_model(
 
     return {
         "classification": cls,
+        "probability": prob_stats,
         "state": state_metrics,
     }
 

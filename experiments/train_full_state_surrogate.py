@@ -84,9 +84,22 @@ def main():
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--bg-multiplier",
+        type=float,
+        default=6.0,
+        help="Infeasible background multiplier relative to feasible points.",
+    )
     parser.add_argument("--lambda-state", type=float, default=1.0)
     parser.add_argument("--lambda-voltage", type=float, default=0.05)
     parser.add_argument("--lambda-monotonic", type=float, default=0.0)
+    parser.add_argument("--lambda-polar", type=float, default=0.25)
+    parser.add_argument("--lambda-hard-neg", type=float, default=0.35)
+    parser.add_argument("--hard-neg-th", type=float, default=0.20)
+    parser.add_argument("--lambda-hard-pos", type=float, default=0.15)
+    parser.add_argument("--hard-pos-floor", type=float, default=0.80)
+    parser.add_argument("--boundary-weight", type=float, default=1.5)
+    parser.add_argument("--boundary-hard-neg-boost", type=float, default=2.0)
     parser.add_argument("--p1-weight", type=float, default=3.0)
     parser.add_argument(
         "--arch",
@@ -113,7 +126,11 @@ def main():
 
     print(f"Device: {device}")
     print("Loading case9mod traditional dataset...")
-    dataset = build_case9mod_dataset(Path(args.data_dir), seed=args.seed)
+    dataset = build_case9mod_dataset(
+        Path(args.data_dir),
+        seed=args.seed,
+        bg_multiplier=args.bg_multiplier,
+    )
     print(
         f"Dataset size={len(dataset.X_norm)} | "
         f"secure={int(dataset.y_cls.sum())} | insecure={int((dataset.y_cls < 0.5).sum())}"
@@ -155,6 +172,13 @@ def main():
         lambda_state=args.lambda_state,
         lambda_voltage=args.lambda_voltage,
         lambda_monotonic=args.lambda_monotonic,
+        lambda_polar=args.lambda_polar,
+        lambda_hard_neg=args.lambda_hard_neg,
+        hard_neg_th=args.hard_neg_th,
+        lambda_hard_pos=args.lambda_hard_pos,
+        hard_pos_floor=args.hard_pos_floor,
+        boundary_weight=args.boundary_weight,
+        boundary_hard_neg_boost=args.boundary_hard_neg_boost,
         state_weight=state_w,
     )
 
@@ -187,7 +211,15 @@ def main():
             "epochs_run": int(len(history["train_total"])),
             "best_threshold": best_threshold,
             "arch": args.arch,
+            "bg_multiplier": float(args.bg_multiplier),
             "lambda_monotonic": float(args.lambda_monotonic),
+            "lambda_polar": float(args.lambda_polar),
+            "lambda_hard_neg": float(args.lambda_hard_neg),
+            "hard_neg_th": float(args.hard_neg_th),
+            "lambda_hard_pos": float(args.lambda_hard_pos),
+            "hard_pos_floor": float(args.hard_pos_floor),
+            "boundary_weight": float(args.boundary_weight),
+            "boundary_hard_neg_boost": float(args.boundary_hard_neg_boost),
             "p1_weight": float(args.p1_weight),
             "history_tail": {
                 "train_total": history["train_total"][-5:],
@@ -195,6 +227,9 @@ def main():
                 "val_f1@0.5": history["val_f1@0.5"][-5:],
                 "val_state_mae": history["val_state_mae"][-5:],
                 "train_mono": history.get("train_mono", [])[-5:],
+                "train_polar": history.get("train_polar", [])[-5:],
+                "train_hard_neg": history.get("train_hard_neg", [])[-5:],
+                "train_hard_pos": history.get("train_hard_pos", [])[-5:],
             },
         },
         "validation": val_eval,
