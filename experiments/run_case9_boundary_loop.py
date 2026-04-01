@@ -213,20 +213,35 @@ def _plot_security_region(
     threshold: float,
     save_path: Path,
 ) -> None:
-    ix, iy = _ixiy_from_xy(ds.X_raw, ds.p2_grid, ds.p3_grid)
-    ny, nx = len(ds.p3_grid), len(ds.p2_grid)
-    probs_2d = np.full((ny, nx), np.nan, dtype=np.float32)
-    labels_2d = np.zeros((ny, nx), dtype=np.float32)
-    probs_2d[iy, ix] = probs_full.astype(np.float32)
-    labels_2d[iy, ix] = ds.y_cls.astype(np.float32)
+    # Extend plotting axes to include [0,10) guard bands explicitly.
+    d2 = float(ds.p2_grid[1] - ds.p2_grid[0])
+    d3 = float(ds.p3_grid[1] - ds.p3_grid[0])
+    x_max = float(ds.p2_grid[-1])
+    y_max = float(ds.p3_grid[-1])
+    p2_axis = np.arange(0.0, x_max + 0.5 * d2, d2, dtype=np.float32)
+    p3_axis = np.arange(0.0, y_max + 0.5 * d3, d3, dtype=np.float32)
 
-    P2, P3 = np.meshgrid(ds.p2_grid, ds.p3_grid)
+    ny, nx = len(p3_axis), len(p2_axis)
+    probs_2d = np.zeros((ny, nx), dtype=np.float32)
+    labels_2d = np.zeros((ny, nx), dtype=np.float32)
+
+    ix = np.rint((ds.X_raw[:, 0] - float(p2_axis[0])) / d2).astype(int)
+    iy = np.rint((ds.X_raw[:, 1] - float(p3_axis[0])) / d3).astype(int)
+    valid = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+    probs_2d[iy[valid], ix[valid]] = probs_full[valid].astype(np.float32)
+    labels_2d[iy[valid], ix[valid]] = ds.y_cls[valid].astype(np.float32)
+
+    P2, P3 = np.meshgrid(p2_axis, p3_axis)
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.2), constrained_layout=True)
 
     ax = axes[0]
     ax.contourf(P2, P3, labels_2d, levels=[-0.5, 0.5, 1.5], cmap=ListedColormap(["#f7b0b0", "#b6e3b6"]))
     ax.contour(P2, P3, labels_2d, levels=[0.5], colors="black", linewidths=1.2)
+    ax.axvspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
+    ax.axhspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
+    ax.set_xlim(0.0, x_max)
+    ax.set_ylim(0.0, y_max)
     ax.set_title("Traditional security region")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
@@ -236,10 +251,17 @@ def _plot_security_region(
     c = ax.contourf(P2, P3, probs_2d, levels=21, cmap="viridis", vmin=0.0, vmax=1.0)
     ax.contour(P2, P3, probs_2d, levels=[threshold], colors="white", linewidths=1.4, linestyles="--")
     ax.contour(P2, P3, labels_2d, levels=[0.5], colors="black", linewidths=1.1)
+    ax.axvspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
+    ax.axhspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
+    ax.set_xlim(0.0, x_max)
+    ax.set_ylim(0.0, y_max)
     ax.set_title(f"Boundary-loop model probability (th={threshold:.2f})")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
     ax.grid(alpha=0.2)
+    ax.plot([], [], color="white", linestyle="--", linewidth=1.4, label="Predicted boundary")
+    ax.plot([], [], color="black", linestyle="-", linewidth=1.1, label="Traditional boundary")
+    ax.legend(loc="upper right", fontsize=8)
     cb = fig.colorbar(c, ax=ax)
     cb.set_label("p_secure")
 
@@ -307,6 +329,9 @@ def _plot_local_zoom(
         ax.contour(GX, GY, z_prob, levels=[threshold], colors="white", linewidths=1.3, linestyles="--")
     if np.isfinite(z_lab).any():
         ax.contour(GX, GY, z_lab, levels=[0.5], colors="black", linewidths=1.1)
+    ax.plot([], [], color="white", linestyle="--", linewidth=1.3, label="Predicted boundary")
+    ax.plot([], [], color="black", linestyle="-", linewidth=1.1, label="Traditional boundary")
+    ax.legend(loc="upper right", fontsize=8)
     ax.set_title("(c) Local boundary comparison")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
