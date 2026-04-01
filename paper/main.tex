@@ -670,28 +670,31 @@ Fig.~\ref{fig:case9mod_ipopt} and Fig.~\ref{fig:case9mod_ssr} show the case9mod 
 $(P_{G2}, P_{G3})$ generator power space. The traditional ground-truth set (Fig.~\ref{fig:case9mod_ipopt})
 reveals \textbf{3 disconnected secure components}, caused by the tight
 $Q_{\min}=-5$~MVAR constraint creating insecure bands between different
-reactive-power-limited operating regimes. SSR-PDNet reproduces all three components
-with F1~=~0.9716 and outperforms both Baseline and Physics-NN under this split.
+reactive-power-limited operating regimes. Under the boundary-theory-guided
+closed-loop setting (EC-PDNet+WLDG-BE), the learned map still reproduces all
+three components while explicitly showing the $[0,10)$~MW guard-band infeasible
+zone on both axes.
 
 \begin{figure}[!t]
   \centering
-  \includegraphics[width=\linewidth]{case9mod_security_region.png}
-  \caption{case9mod static security region in generator power space $(P_{G2}, P_{G3})$.
-    Panel (a) shows the traditional ground truth. Panel (b) shows the SSR-PDNet
-    security-score field and recovered boundary. Panel (c) colors secure
-    operating points by minimum bus voltage, showing internal voltage-margin
-    variation across the three disconnected components.}
+  \includegraphics[width=\linewidth]{case9mod_dl_comparison.png}
+  \caption{case9mod DL-vs-traditional comparison in generator power space
+    $(P_{G2}, P_{G3})$ using EC-PDNet+WLDG-BE. Panel (a) is the traditional
+    IPOPT reference; panel (b) is the learned security-score field with
+    predicted boundary and true boundary overlays; panel (c) is the
+    disagreement map. Axes start from zero to explicitly visualize the
+    $[0,10)$~MW guard-band infeasible area.}
   \label{fig:case9mod_ssr}
 \end{figure}
 
 \begin{figure}[!t]
   \centering
-  \includegraphics[width=\linewidth]{case9mod_local_zoom.png}
-  \caption{case9mod local zoom around a boundary-dense region. Panel (a)
-    visualizes local secure-point layout; panel (b) shows density heterogeneity
-    via hexbin counts; panel (c) compares SSR-PDNet local score field with the
-    true boundary, highlighting sparse transition corridors between denser
-    secure clusters.}
+  \includegraphics[width=\linewidth]{case9mod_boundaryloop_local_zoom.png}
+  \caption{case9mod local zoom around a boundary-dense region under
+    EC-PDNet+WLDG-BE. Panel (a) shows local secure/insecure layout; panel (b)
+    shows density heterogeneity via hexbin counts; panel (c) overlays the
+    predicted boundary (white dashed) and traditional boundary (black),
+    highlighting the transition corridor near the true SRB.}
   \label{fig:case9_zoom}
 \end{figure}
 
@@ -852,12 +855,19 @@ ground truth.
       & Baseline & 0.9023 & 0.6270 & baseline \\
       & \textbf{SSR-PDNet} & \textbf{0.9602} & \textbf{0.6295} & +0.40\% \\
     \midrule
-    \multirow{2}{*}{case9mod}
+    \multirow{3}{*}{case9mod}
       & Baseline & 0.8520 & 0.5424 & baseline \\
       & \textbf{SSR-PDNet} & \textbf{0.9034} & \textbf{0.5427} & +0.05\% \\
+      & EC-PDNet+WLDG-BE & \textbf{0.9979} & 0.4433 & n/a \\
     \bottomrule
   \end{tabular}
 \end{table}
+
+For case9mod, EC-PDNet+WLDG-BE achieves very high full-grid agreement
+(0.9979) and classification F1 (0.9661 on full-grid labels), while boundary
+F1 computed by one-pixel morphological rings remains moderate (0.4433),
+indicating that the hardest errors concentrate in a thin boundary-adjacent
+corridor rather than the region interior.
 
 \textbf{Full-state surrogate accuracy (case9mod).}
 Table~\ref{tab:fullstate} reports the multitask surrogate results. In
@@ -983,6 +993,10 @@ after two mining rounds. Test F1 improved from 0.8938 (round 1) to 0.9620
 $\Pr(p>0.5\mid y=0)=0.0036$). The produced maps (Fig.~\ref{fig:case9_boundaryloop_ssr}
 and Fig.~\ref{fig:case9_boundaryloop_zoom}) show that the method preserves the
 global disconnected topology and increases local boundary sharpness.
+
+In addition, the regenerated comparison figure Fig.~\ref{fig:case9mod_ssr}
+provides a direct visual check against traditional labels under the same
+coordinate window and thresholding rule.
 
 \begin{figure}[!t]
   \centering

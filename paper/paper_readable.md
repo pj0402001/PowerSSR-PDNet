@@ -465,8 +465,10 @@ Fig. [ref] and Fig. [ref] show the case9mod static security region in
 $(P_{G2}, P_{G3})$ generator power space. The traditional ground-truth set (Fig. [ref])
 reveals **3 disconnected secure components**, caused by the tight
 $Q_{\min}=-5$ MVAR constraint creating insecure bands between different
-reactive-power-limited operating regimes. SSR-PDNet reproduces all three components
-with F1 = 0.9716 and outperforms both Baseline and Physics-NN under this split.
+reactive-power-limited operating regimes. Under the boundary-theory-guided
+closed-loop setting (EC-PDNet+WLDG-BE), the learned map still reproduces all
+three components while explicitly showing the $[0,10)$ MW guard-band infeasible
+zone on both axes.
 
 > [Figure omitted; see the figures directory.]
 
@@ -551,6 +553,12 @@ grid-level agreement and boundary-focused scores relative to the traditional
 ground truth.
 
 > [Table omitted in readable markdown.]
+
+For case9mod, EC-PDNet+WLDG-BE achieves very high full-grid agreement
+(0.9979) and classification F1 (0.9661 on full-grid labels), while boundary
+F1 computed by one-pixel morphological rings remains moderate (0.4433),
+indicating that the hardest errors concentrate in a thin boundary-adjacent
+corridor rather than the region interior.
 
 **Full-state surrogate accuracy (case9mod).**
 Table [ref] reports the multitask surrogate results. In
@@ -637,6 +645,10 @@ after two mining rounds. Test F1 improved from 0.8938 (round 1) to 0.9620
 $\Pr(p>0.5\mid y=0)=0.0036$). The produced maps (Fig. [ref]
 and Fig. [ref]) show that the method preserves the
 global disconnected topology and increases local boundary sharpness.
+
+In addition, the regenerated comparison figure Fig. [ref]
+provides a direct visual check against traditional labels under the same
+coordinate window and thresholding rule.
 
 > [Figure omitted; see the figures directory.]
 
