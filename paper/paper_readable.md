@@ -5,32 +5,7 @@
 
 ## Abstract
 
-Characterizing the static security region (SSR) in *generator power
-space* is fundamental to online security assessment, preventive dispatch, and
-operating-margin analysis. The SSR is the set of generator active-power setpoints
-for which a voltage- and flow-secure AC solution exists under fixed loading.
-For the multi-solution benchmark cases of Bukhsh et al., this set is strongly
-nonconvex and may split into disconnected secure components, making dense
-nonlinear-feasibility scanning computationally expensive.
-
-We propose **SSR-PDNet**, a physics-informed neural framework that learns the
-static security region together with internal operating-state structure. The model combines
-(i) a shared encoder operating directly on generator dispatch coordinates,
-(ii) a security head for boundary discrimination, and (iii) a physics head that
-regularizes the learned representation with voltage-state information through
-primal-dual training. This design preserves the correct coordinate-space
-interpretation while improving boundary sharpness near disconnected secure
-components.
-
-Experiments on WB2, WB5, LMBM3, and case9mod show that SSR-PDNet accurately
-reproduces the benchmark static security regions obtained from traditional feasibility
-scanning. On the larger multi-component cases, SSR-PDNet attains **F1 = 0.9671**
-on WB5 and **F1 = 0.9716** on case9mod while recovering the two- and
-three-component secure-set topology, respectively. On WB2 and LMBM3, the paper
-further visualizes voltage, reactive-power, redispatch, and bifurcation-related
-quantities inside the secure operating set, showing that the framework is not
-limited to binary classification but supports physically interpretable security
-region analysis.
+We study static security region (SSR) learning in the correct *generator power space*, where the multi-solution Bukhsh benchmark cases exhibit disconnected and highly nonconvex secure sets that are expensive to obtain by dense nonlinear feasibility scanning. We propose an enhanced framework combining SSR-PDNet, an energy-closure full-state surrogate (EC-PDNet), and a boundary-theory-guided closed-loop sample-generation mechanism that fuses worth-learning boundary exploration with SRB topological cues. Across WB2, WB5, LMBM3, and case9mod, the method preserves SSR topology and attains high classification performance; on case9mod, the boundary loop improves test boundary characterization to F1=0.9620 with strong probability polarization (negative-class mean 0.0069, P95 0.0020), while the physics-structured surrogate maintains full-state fidelity (overall MAE 0.1385, $P_{G1}$ MAE 0.1018 MW), demonstrating a practical path toward fast and physically grounded replacement of pointwise traditional solves.
 
 **Keywords:**
 static security region, generator power space,
@@ -93,31 +68,11 @@ because the SSR may be small, irregular, or have non-trivial topology.
 
 This paper makes the following contributions:
 
-- We formulate static security region characterization as binary
-    classification in *generator power space* $(P_{G2},\ldots,P_{Gn_g})$
-    with loads fixed at nominal values, matching the traditional nonlinear-feasibility scanning
-    procedure of Bukhsh et al.\ exactly. This coordinate choice is essential for
-    preserving disconnected secure components.
+- **Coordinate-correct SSR learning framework.** We formulate SSR characterization strictly in generator power space (loads fixed), so the learned model targets the same object as traditional scanning and can recover disconnected secure components.
 
-- We propose **SSR-PDNet**, a physics-informed neural architecture with
-    a shared encoder, a security discrimination head, and a physics head for
-    internal-state regularization. The training objective combines focal loss,
-    contrastive boundary sharpening, and primal-dual voltage penalties.
+- **Boundary-theory-guided closed-loop sample generation.** We introduce a worth-learning boundary exploration mechanism that combines boundary-distance uncertainty and security-margin valuation to mine high-value boundary candidates, and iteratively performs update--generate--mine closed-loop expansion. This integrates the worth-learning idea of Hu *et al.* [cite] with boundary-topology sample-pair concepts from SRB studies [cite].
 
-- We enrich the benchmark study beyond classification by visualizing
-    secure-point internal states and local point-cloud structure. In WB2 and
-    LMBM3, the learned static security region is linked to voltage profiles,
-    reactive power, slack redispatch, and dual-solution structure. In WB5 and
-    case9mod, boundary-focused zoom figures reveal local point arrangement and
-    density heterogeneity that shape boundary formation.
-
-- We conduct systematic experiments on all Bukhsh multi-solution cases.
-    SSR-PDNet reproduces both disconnected components of WB5 (F1=0.9671) and all
-    three components of case9mod (F1=0.9716), while the redesigned figures also
-    show secure-set redispatch and voltage-margin patterns.
-
-- All code, data pipelines (nonlinear-solver and traditional CSV), trained
-    models, and visualization tools are released as open source.
+- **Physics-structured full-state surrogate and reproducible evidence.** Beyond boundary classification, we use an energy-closure parameterization (EC-PDNet) that embeds active-power balance into network outputs and jointly predicts security and internal OPF states. On WB2/WB5/LMBM3/case9mod we show accurate topology recovery, and on case9mod we report both boundary-probability polarization and full-state accuracy with open artifacts.
 
 The remainder of the paper is organized as follows.
 Section [ref] formally defines the SSR and the learning problem.
@@ -336,6 +291,51 @@ $$
 where $\bar{p}_{\mathcal{S}}$ and $\bar{p}_{\mathcal{I}}$ are the mean
 predicted probabilities over secure and insecure samples, respectively, and
 $m = 0.5$ is the target margin.
+
+## Boundary-Theory-Guided Closed-Loop Data Generation
+
+To better characterize boundary geometry and reduce ``ambiguous'' predictions
+for infeasible points near the SRB, we augment static background sampling with
+an iterative worth-learning boundary exploration loop.
+
+**Reference synthesis.** From Hu *et al.* [cite], we adopt
+the principle of identifying *worth-learning* inputs that are poorly
+generalized by the current model. From Wu *et al.* [cite], we
+adopt the SRB topological viewpoint that boundary characterization should focus
+on secure/insecure neighboring pairs and local boundary geometry.
+
+**Boundary value score.**
+For an unlabeled candidate dispatch $\mathbf{u}$, we define a boundary value score
+
+$$
+\mathcal{V}(\mathbf{u}) = \alpha\,\exp\!\left(-\frac{|p_\phi(\mathbf{u})-\tau_b|}{\tau}\right)
+ + \beta\,\bigl(1-\tilde{m}_V(\mathbf{u})\bigr),
+$$
+
+where $p_\phi(\mathbf{u})$ is the current secure probability, $\tau_b$ is the
+current decision threshold, and $\tilde{m}_V(\mathbf{u})\in[0,1]$ is the
+normalized predicted voltage security margin. The first term prefers points
+close to the current decision boundary; the second term prefers points with
+small physical margin.
+
+**Directional boundary probing.**
+For high-uncertainty seeds, we compute local normal directions using the
+probability gradient $\nabla_{\mathbf{u}} p_\phi(\mathbf{u})$ and generate
+proposals along $\pm\nabla p_\phi$ (normalized). This implements a practical
+boundary-normal exploration akin to SRB tangent/normal tracking.
+
+**Update--generate--mine loop.**
+At loop round $k$, we train $f_{\phi_k}$ on current set $\mathcal{D}_k$, evaluate
+candidate pool scores by \eqref{eq:boundary_value}, query top-ranked samples
+from the traditional oracle labels, and update
+$\mathcal{D}_{k+1}=\mathcal{D}_{k}\cup\mathcal{D}_k^{\text{mine}}$.
+The process stops after fixed rounds or when validation gains saturate.
+
+**Theory-consistent target.**
+This loop explicitly increases sample density around the true SRB and improves
+probability polarization: secure-side probabilities approach 1 while
+insecure-side probabilities approach 0 away from an increasingly thin
+transition corridor.
 
 ## Training Procedure
 
@@ -625,11 +625,28 @@ violate the physics constraints.
 
 ## Limitations and Future Work
 
-**Background insecure data quality.** The background insecure points
-are sampled uniformly, which may include points far from the boundary and
-create an imbalanced difficulty distribution. Worth-learning adversarial
-sampling [cite] targeting the boundary region would improve
-boundary F1 further.
+**Boundary-loop validation.**
+To directly test the boundary-theory-guided loop in
+Section [ref], we ran a dedicated case9mod study
+(``EC-PDNet + WLDG-BE'') with iterative update--generate--mine rounds.
+Starting from a reduced training subset (4,020 points), the loop mined
+high-value boundary candidates and expanded the training set to 10,420 points
+after two mining rounds. Test F1 improved from 0.8938 (round 1) to 0.9620
+(round 3), while the insecure probability distribution became sharply polarized
+($\mathbb{E}[p\mid y=0]=0.0069$, $\mathrm{P95}=0.0020$, and
+$\Pr(p>0.5\mid y=0)=0.0036$). The produced maps (Fig. [ref]
+and Fig. [ref]) show that the method preserves the
+global disconnected topology and increases local boundary sharpness.
+
+> [Figure omitted; see the figures directory.]
+
+> [Figure omitted; see the figures directory.]
+
+**Remaining limitation.**
+Although interior infeasible points are strongly polarized to near-zero
+probability, boundary-adjacent infeasible samples remain the hardest subset;
+further gains likely require stronger SRB mode-coverage control and
+multi-scale local geometry modeling.
 
 **LMBM3.** The LMBM3 case exhibits a narrow secure band that requires
 dense feasibility scanning with load-factor parametrization ($\lambda \in [1.0, 1.5]$)
@@ -665,26 +682,22 @@ closed-form power flow inversions.
 
 # Conclusion
 
-We presented SSR-PDNet, a physics-informed neural framework for characterizing the
-static security region in *generator power space* — the correct coordinate
-space for power system security assessment. By working in generator power space
-with loads fixed at nominal, SSR-PDNet reproduces the disconnected component
-structure (2 components for WB5, 3 for case9mod) that is the defining topological
-feature of the static security region in the Bukhsh et al.\ benchmark cases. SSR-PDNet
-achieves F1 = 0.9671 on WB5 and F1 = 0.9716 on case9mod, with near-perfect
-recall (0.9967) on WB5 and full recall (1.000) on WB2, critical for operational safety.
-
-Beyond boundary characterization, the added full-state surrogate study on
-case9mod demonstrates that a neural surrogate can jointly recover security
-labels and internal OPF state variables with high fidelity relative to the
-traditional solver, supporting a practical path toward replacing repetitive
-pointwise nonlinear solves in online security-assessment workflows.
+We presented a coordinate-correct and boundary-theory-guided framework for
+static security region characterization in *generator power space*.
+By combining SSR-PDNet/EC-PDNet with a worth-learning boundary exploration
+loop, the method preserves disconnected SSR topology while improving boundary
+probability polarization on case9mod: in the final closed-loop round,
+test F1 reaches 0.9620 with strongly suppressed insecure probabilities
+($\mathbb{E}[p\mid y=0]=0.0069$, $\mathrm{P95}=0.0020$). The framework also
+retains physically meaningful full-state prediction capability with
+$P_{G1}$ MAE around 0.10 MW, supporting a practical path toward replacing
+repetitive pointwise nonlinear feasibility solves.
 
 Future work will address: (i) scalability to large systems via graph neural
-network encoders that exploit network topology; (ii) extension to $N{-}1$
-contingency security regions; (iii) integration with online security assessment
-workflows; and (iv) incorporation of the worth-learning data generation strategy
-to efficiently sample near the security boundary.
+encoders and mode-aware SRB decomposition; (ii) extension to $N{-}1$
+contingency security regions; (iii) adaptive multi-scale boundary mining for
+hard boundary-adjacent infeasible samples; and (iv) integration with online
+security-assessment workflows.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
