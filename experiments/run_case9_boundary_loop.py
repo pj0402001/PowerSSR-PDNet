@@ -26,7 +26,7 @@ import random
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -349,6 +349,8 @@ def _plot_local_zoom(
     probs_full: np.ndarray,
     threshold: float,
     save_path: Path,
+    center: Optional[Tuple[float, float]] = None,
+    title_suffix: str = "",
 ) -> None:
     d2 = float(ds.p2_grid[1] - ds.p2_grid[0])
     d3 = float(ds.p3_grid[1] - ds.p3_grid[0])
@@ -367,7 +369,10 @@ def _plot_local_zoom(
     pred_2d = (probs_2d > float(threshold)).astype(np.float32)
 
     bmask = np.abs(probs_2d - float(threshold)) < 0.04
-    if np.any(bmask):
+    if center is not None:
+        cx = float(center[0])
+        cy = float(center[1])
+    elif np.any(bmask):
         yy_i, xx_i = np.where(bmask)
         cx = float(np.median(p2_axis[xx_i]))
         cy = float(np.median(p3_axis[yy_i]))
@@ -396,7 +401,8 @@ def _plot_local_zoom(
     ax = axes[0]
     ax.scatter(xs[ls <= 0.5], ys[ls <= 0.5], s=8, c="#d62728", alpha=0.5, label="Insecure")
     ax.scatter(xs[ls > 0.5], ys[ls > 0.5], s=10, c="#2ca02c", alpha=0.65, label="Secure")
-    ax.set_title("(a) Local sample layout")
+    suffix = f" [{title_suffix}]" if title_suffix else ""
+    ax.set_title(f"(a) Local sample layout{suffix}")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
     ax.grid(alpha=0.2)
@@ -404,7 +410,7 @@ def _plot_local_zoom(
 
     ax = axes[1]
     hb = ax.hexbin(xs, ys, gridsize=26, mincnt=1, cmap="YlOrRd")
-    ax.set_title("(b) Local density (hexbin)")
+    ax.set_title(f"(b) Local density (hexbin){suffix}")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
     ax.grid(alpha=0.2)
@@ -422,7 +428,7 @@ def _plot_local_zoom(
     ax.plot([], [], color="white", linestyle="--", linewidth=1.3, label="Predicted boundary")
     ax.plot([], [], color="black", linestyle="-", linewidth=1.1, label="Traditional boundary")
     ax.legend(loc="upper right", fontsize=8)
-    ax.set_title("(c) Local boundary comparison")
+    ax.set_title(f"(c) Local boundary comparison{suffix}")
     ax.set_xlabel("P_G2 (MW)")
     ax.set_ylabel("P_G3 (MW)")
     ax.grid(alpha=0.2)
@@ -431,6 +437,60 @@ def _plot_local_zoom(
 
     fig.savefig(save_path, dpi=300)
     plt.close(fig)
+
+
+def _extract_component_centers(ds: Case9Dataset, top_k: int = 3) -> List[Tuple[float, float]]:
+    """Find centers for largest secure components on the case9 lattice."""
+    ny, nx = len(ds.p3_grid), len(ds.p2_grid)
+    labels = np.zeros((ny, nx), dtype=np.float32)
+    ix, iy = _ixiy_from_xy(ds.X_raw, ds.p2_grid, ds.p3_grid)
+    valid = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+    labels[iy[valid], ix[valid]] = ds.y_cls[valid]
+    mask = labels > 0.5
+
+    visited = np.zeros_like(mask, dtype=bool)
+    comps: List[np.ndarray] = []
+    nbr = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    for r in range(ny):
+        for c in range(nx):
+            if not mask[r, c] or visited[r, c]:
+                continue
+            stack = [(r, c)]
+            visited[r, c] = True
+            coords: List[Tuple[int, int]] = []
+            while stack:
+                rr, cc = stack.pop()
+                coords.append((rr, cc))
+                for dr, dc in nbr:
+                    r2, c2 = rr + dr, cc + dc
+                    if 0 <= r2 < ny and 0 <= c2 < nx and mask[r2, c2] and (not visited[r2, c2]):
+                        visited[r2, c2] = True
+                        stack.append((r2, c2))
+            comp = np.zeros_like(mask, dtype=bool)
+            if coords:
+                rr = np.array([p[0] for p in coords], dtype=int)
+                cc = np.array([p[1] for p in coords], dtype=int)
+                comp[rr, cc] = True
+            comps.append(comp)
+
+    if not comps:
+        return []
+
+    comps = sorted(comps, key=lambda m: int(m.sum()), reverse=True)
+    centers: List[Tuple[float, float]] = []
+    for comp in comps[: max(1, int(top_k))]:
+        p = np.pad(comp.astype(np.int16), 1, mode="constant", constant_values=0)
+        n4 = p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]
+        edge = comp & (n4 < 4)
+        pick = edge if edge.any() else comp
+        yy, xx = np.where(pick)
+        if yy.size == 0:
+            continue
+        cx = float(np.median(ds.p2_grid[xx]))
+        cy = float(np.median(ds.p3_grid[yy]))
+        centers.append((cx, cy))
+    return centers
 
 
 def main() -> None:
@@ -752,7 +812,31 @@ def main() -> None:
     security_fig = figs_dir / "case9mod_boundaryloop_security_region.png"
     zoom_fig = figs_dir / "case9mod_boundaryloop_local_zoom.png"
     _plot_security_region(ds, probs_full=probs_full, threshold=best_threshold, save_path=security_fig)
-    _plot_local_zoom(ds, probs_full=probs_full, threshold=best_threshold, save_path=zoom_fig)
+    centers = _extract_component_centers(ds, top_k=3)
+    if centers:
+        _plot_local_zoom(
+            ds,
+            probs_full=probs_full,
+            threshold=best_threshold,
+            save_path=zoom_fig,
+            center=centers[0],
+            title_suffix="Component 1",
+        )
+    else:
+        _plot_local_zoom(ds, probs_full=probs_full, threshold=best_threshold, save_path=zoom_fig)
+
+    extra_zooms: List[str] = []
+    for i, ctr in enumerate(centers[1:3], start=2):
+        zpath = figs_dir / f"case9mod_boundaryloop_local_zoom_comp{i}.png"
+        _plot_local_zoom(
+            ds,
+            probs_full=probs_full,
+            threshold=best_threshold,
+            save_path=zpath,
+            center=ctr,
+            title_suffix=f"Component {i}",
+        )
+        extra_zooms.append(str(zpath))
 
     metrics = {
         "method": "EC-PDNet + WLDG-BE",
@@ -777,6 +861,7 @@ def main() -> None:
             "probs_full": str(results_dir / "case9mod_boundaryloop_probs.npy"),
             "figure_security": str(security_fig),
             "figure_zoom": str(zoom_fig),
+            "figure_zoom_extra": extra_zooms,
         },
     }
 

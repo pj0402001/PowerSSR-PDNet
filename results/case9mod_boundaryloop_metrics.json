@@ -299,6 +299,10 @@
     "checkpoint": "D:\\安全域\\PowerSSR-DL\\results\\case9mod_boundaryloop_ecpd.pth",
     "probs_full": "D:\\安全域\\PowerSSR-DL\\results\\case9mod_boundaryloop_probs.npy",
     "figure_security": "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundaryloop_security_region.png",
-    "figure_zoom": "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundaryloop_local_zoom.png"
+    "figure_zoom": "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundaryloop_local_zoom.png",
+    "figure_zoom_extra": [
+      "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundaryloop_local_zoom_comp2.png",
+      "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundaryloop_local_zoom_comp3.png"
+    ]
   }
 }
