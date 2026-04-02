@@ -111,6 +111,79 @@ def _stratified_split(
     return {"train": train, "val": val, "test": test}
 
 
+def _select_strict_threshold(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    fpr_target: float = 1e-3,
+    t_min: float = 0.50,
+    t_max: float = 0.95,
+    n_grid: int = 91,
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Select threshold prioritizing low false-positive rate.
+
+    Strategy:
+    1) Among thresholds with FPR <= fpr_target, maximize F1.
+    2) If none satisfy target, choose threshold with minimum FPR, then max F1.
+    """
+    p = probs.astype(np.float64)
+    y = labels.astype(np.int64)
+
+    best_feasible = None
+    best_any = None
+
+    for t in np.linspace(t_min, t_max, int(n_grid)):
+        pred = (p > float(t)).astype(np.int64)
+        tp = float(np.sum((pred == 1) & (y == 1)))
+        fp = float(np.sum((pred == 1) & (y == 0)))
+        fn = float(np.sum((pred == 0) & (y == 1)))
+        tn = float(np.sum((pred == 0) & (y == 0)))
+
+        prec = tp / (tp + fp + 1e-12)
+        rec = tp / (tp + fn + 1e-12)
+        f1 = 2.0 * prec * rec / (prec + rec + 1e-12)
+        fpr = fp / (fp + tn + 1e-12)
+
+        row = {
+            "threshold": float(t),
+            "f1": float(f1),
+            "precision": float(prec),
+            "recall": float(rec),
+            "fpr": float(fpr),
+            "tp": int(tp),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tn": int(tn),
+        }
+
+        if (best_any is None) or (row["fpr"] < best_any["fpr"] - 1e-12) or (
+            abs(row["fpr"] - best_any["fpr"]) <= 1e-12 and row["f1"] > best_any["f1"] + 1e-12
+        ):
+            best_any = row
+
+        if row["fpr"] <= float(fpr_target):
+            if (best_feasible is None) or (row["f1"] > best_feasible["f1"] + 1e-12) or (
+                abs(row["f1"] - best_feasible["f1"]) <= 1e-12 and row["threshold"] > best_feasible["threshold"]
+            ):
+                best_feasible = row
+
+    out = best_feasible if best_feasible is not None else best_any
+    if out is None:
+        # Should never happen because threshold grid is non-empty.
+        out = {
+            "threshold": 0.5,
+            "f1": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "fpr": 0.0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "tn": 0,
+        }
+    return float(out["threshold"]), out
+
+
 def _make_loader(ds: Case9Dataset, indices: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
     part = MultiTaskDataset(
         ds.X_norm[indices],
@@ -377,6 +450,12 @@ def main() -> None:
     parser.add_argument("--boundary-weight", type=float, default=2.2)
     parser.add_argument("--boundary-hard-neg-boost", type=float, default=3.0)
     parser.add_argument("--p1-weight", type=float, default=4.0)
+    parser.add_argument(
+        "--strict-fpr-target",
+        type=float,
+        default=1e-3,
+        help="Target max FPR when selecting final plotting/deployment threshold.",
+    )
     args = parser.parse_args()
 
     _set_seed(args.seed)
@@ -610,6 +689,20 @@ def main() -> None:
         "val": _make_loader(ds, split["val"], batch_size=args.batch_size, shuffle=False),
         "test": _make_loader(ds, split["test"], batch_size=args.batch_size, shuffle=False),
     }
+
+    # Re-select final threshold with stricter FPR preference on validation set
+    val_probs, _ = _predict_on_indices(model, ds, split["val"], device=device)
+    val_labels = ds.y_cls[split["val"]]
+    strict_th, strict_row = _select_strict_threshold(
+        probs=val_probs,
+        labels=val_labels,
+        fpr_target=float(args.strict_fpr_target),
+        t_min=0.50,
+        t_max=0.95,
+        n_grid=91,
+    )
+    best_threshold = float(strict_th)
+
     final_val = evaluate_full_state_model(model, loaders_eval["val"], ds, device, threshold=best_threshold)
     final_test = evaluate_full_state_model(model, loaders_eval["test"], ds, device, threshold=best_threshold)
     final_test_closure = evaluate_energy_consistency(model, loaders_eval["test"], ds, device)
@@ -631,9 +724,9 @@ def main() -> None:
             "state_mean": ds.state_mean,
             "state_std": ds.state_std,
             "state_names": ds.state_names,
-            "best_threshold": float(best_threshold),
-            "best_round": int(best_round),
-        },
+        "best_threshold": float(best_threshold),
+        "best_round": int(best_round),
+    },
         ckpt_path,
     )
 
@@ -655,6 +748,7 @@ def main() -> None:
         "config": vars(args),
         "best_round": int(best_round),
         "best_threshold": float(best_threshold),
+        "strict_threshold_info": strict_row,
         "rounds": [asdict(r) for r in rounds],
         "final": {
             "validation": final_val,
