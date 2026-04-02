@@ -1,11 +1,11 @@
-# Physics-Informed Neural Characterization of Static Security Regions in Generator Power Space Using Multi-Solution Benchmark Cases
+# Static Security Region Characterization of Power Systems Based on SSR-PDNet
 
 > Readable Markdown generated from `paper/main.tex`.
 > Mathematical expressions are preserved in LaTeX form (`$...$`, `$$...$$`).
 
 ## Abstract
 
-We study static security region (SSR) learning in the correct *generator power space*, where the multi-solution Bukhsh benchmark cases exhibit disconnected and highly nonconvex secure sets that are expensive to obtain by dense nonlinear feasibility scanning. We propose an enhanced framework combining SSR-PDNet, an energy-closure full-state surrogate (EC-PDNet), and a boundary-theory-guided closed-loop sample-generation mechanism that fuses worth-learning boundary exploration with SRB topological cues. Across WB2, WB5, LMBM3, and case9mod, the method preserves SSR topology and attains high classification performance; on case9mod, the boundary loop improves test boundary characterization to F1=0.9620 with strong probability polarization (negative-class mean 0.0069, P95 0.0020), while the physics-structured surrogate maintains full-state fidelity (overall MAE 0.1385, $P_{G1}$ MAE 0.1018 MW), demonstrating a practical path toward fast and physically grounded replacement of pointwise traditional solves.
+We study static security region (SSR) learning in the correct *generator power space*, where benchmark cases exhibit disconnected and highly nonconvex secure sets that are expensive to obtain by dense nonlinear feasibility scanning. We build a practical framework around SSR-PDNet and EC-PDNet, and further introduce a boundary-theory-guided closed-loop data-generation mechanism to improve boundary modeling. Across WB2, WB5, LMBM3, and case9mod, the method preserves SSR topology and achieves strong classification performance; on case9mod, the boundary loop reaches test F1=0.9620 with strong probability polarization on insecure points (mean 0.0069, P95 0.0020), while the full-state surrogate keeps high fidelity (overall MAE 0.1385, $P_{G1}$ MAE 0.1018 MW), supporting fast and physically consistent replacement of repetitive pointwise traditional solves.
 
 **Keywords:**
 static security region, generator power space,
@@ -68,11 +68,9 @@ because the SSR may be small, irregular, or have non-trivial topology.
 
 This paper makes the following contributions:
 
-- **Coordinate-correct SSR learning framework.** We formulate SSR characterization strictly in generator power space (loads fixed), so the learned model targets the same object as traditional scanning and can recover disconnected secure components.
+- **Boundary-accurate SSR modeling in the correct coordinate space.** We formulate SSR characterization strictly in generator power space (loads fixed), and combine SSR-PDNet with a boundary-theory-guided update--generate--mine loop to improve boundary exploration and probability polarization near the security boundary.
 
-- **Boundary-theory-guided closed-loop sample generation.** We introduce a worth-learning boundary exploration mechanism that combines boundary-distance uncertainty and security-margin valuation to mine high-value boundary candidates, and iteratively performs update--generate--mine closed-loop expansion. This integrates the worth-learning idea of Hu *et al.* [cite] with boundary-topology sample-pair concepts from SRB studies [cite].
-
-- **Physics-structured full-state surrogate and reproducible evidence.** Beyond boundary classification, we use an energy-closure parameterization (EC-PDNet) that embeds active-power balance into network outputs and jointly predicts security and internal OPF states. On WB2/WB5/LMBM3/case9mod we show accurate topology recovery, and on case9mod we report both boundary-probability polarization and full-state accuracy with open artifacts.
+- **Physics-structured full-state surrogate.** We use EC-PDNet with energy-closure parameterization to jointly predict security and internal OPF states, improving physical consistency and providing reproducible benchmark evidence on WB2/WB5/LMBM3/case9mod.
 
 The remainder of the paper is organized as follows.
 Section [ref] formally defines the SSR and the learning problem.
