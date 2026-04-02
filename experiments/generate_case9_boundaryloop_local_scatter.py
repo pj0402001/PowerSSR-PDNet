@@ -133,12 +133,13 @@ def main() -> None:
         fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.8), constrained_layout=True)
 
         def _draw_boundaries(ax):
-            # Predicted boundary: black dashed
-            ax.contour(XW, YW, prw, levels=[0.5], colors="#111111", linewidths=1.4, linestyles="--")
-            # Traditional boundary: white solid with dark stroke for visibility
-            cs = ax.contour(XW, YW, lw, levels=[0.5], colors="white", linewidths=1.8, linestyles="-")
-            for coll in cs.collections:
-                coll.set_path_effects([pe.Stroke(linewidth=3.0, foreground="#222222"), pe.Normal()])
+            # Predicted boundary: white dashed with dark stroke for visibility.
+            cs_pred = ax.contour(XW, YW, prw, levels=[0.5], colors="white", linewidths=1.6, linestyles="--")
+            for coll in cs_pred.collections:
+                coll.set_path_effects([pe.Stroke(linewidth=2.8, foreground="#222222"), pe.Normal()])
+
+            # Traditional boundary: black solid.
+            ax.contour(XW, YW, lw, levels=[0.5], colors="#111111", linewidths=1.6, linestyles="-")
 
         # Left: local label scatter + boundaries
         ax = axes[0]
@@ -157,8 +158,8 @@ def main() -> None:
         ax.set_xlabel("P_G2 (MW)")
         ax.set_ylabel("P_G3 (MW)")
         ax.grid(alpha=0.2)
-        ax.plot([], [], color="#111111", linestyle="--", linewidth=1.4, label="Predicted boundary")
-        ax.plot([], [], color="white", linestyle="-", linewidth=1.8, label="Traditional boundary")
+        ax.plot([], [], color="white", linestyle="--", linewidth=1.6, label="Predicted boundary")
+        ax.plot([], [], color="#111111", linestyle="-", linewidth=1.6, label="Traditional boundary")
         ax.legend(loc="upper right", fontsize=8)
 
         # Right: local probability scatter + boundaries
