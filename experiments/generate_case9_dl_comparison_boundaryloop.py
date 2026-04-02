@@ -96,8 +96,9 @@ def main() -> None:
     ax = axes[1]
     cs = ax.contourf(XX, YY, probs_2d, levels=np.linspace(0, 1, 21), cmap=secure_cmap, vmin=0.0, vmax=1.0)
     plt.colorbar(cs, ax=ax, label="Security score", fraction=0.045, pad=0.02)
-    if probs_2d.max() > th and probs_2d.min() < th:
-        ax.contour(XX, YY, probs_2d, levels=[th], colors="#111111", linewidths=2.2)
+    pred_2d = (probs_2d > th).astype(np.float32)
+    # Use binary predicted boundary for piecewise-realistic boundary geometry.
+    ax.contour(XX, YY, pred_2d, levels=[0.5], colors="#111111", linewidths=2.2)
     if labels_2d.max() > 0.5 and labels_2d.min() < 0.5:
         ax.contour(XX, YY, labels_2d, levels=[0.5], colors="white", linewidths=1.4, linestyles="--")
     ax.set_title(f"EC-PDNet+WLDG-BE (grid acc.={grid_acc:.3f}, th={th:.2f})", fontweight="bold")

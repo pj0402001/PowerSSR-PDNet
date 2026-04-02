@@ -305,6 +305,7 @@ def _plot_security_region(
     labels_2d[iy[valid], ix[valid]] = ds.y_cls[valid].astype(np.float32)
 
     P2, P3 = np.meshgrid(p2_axis, p3_axis)
+    pred_2d = (probs_2d > float(threshold)).astype(np.float32)
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.2), constrained_layout=True)
 
@@ -322,7 +323,8 @@ def _plot_security_region(
 
     ax = axes[1]
     c = ax.contourf(P2, P3, probs_2d, levels=21, cmap="viridis", vmin=0.0, vmax=1.0)
-    ax.contour(P2, P3, probs_2d, levels=[threshold], colors="white", linewidths=1.4, linestyles="--")
+    # Use binary predicted boundary to avoid visually over-smoothed straight segments.
+    ax.contour(P2, P3, pred_2d, levels=[0.5], colors="white", linewidths=1.4, linestyles="--")
     ax.contour(P2, P3, labels_2d, levels=[0.5], colors="black", linewidths=1.1)
     ax.axvspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
     ax.axhspan(0.0, 10.0, color="#d9d9d9", alpha=0.35, zorder=0)
@@ -348,25 +350,46 @@ def _plot_local_zoom(
     threshold: float,
     save_path: Path,
 ) -> None:
-    x = ds.X_raw[:, 0]
-    y = ds.X_raw[:, 1]
-    labels = ds.y_cls
-    bmask = np.abs(probs_full - threshold) < 0.08
+    d2 = float(ds.p2_grid[1] - ds.p2_grid[0])
+    d3 = float(ds.p3_grid[1] - ds.p3_grid[0])
+    x_max = float(ds.p2_grid[-1])
+    y_max = float(ds.p3_grid[-1])
+    p2_axis = np.arange(0.0, x_max + 0.5 * d2, d2, dtype=np.float32)
+    p3_axis = np.arange(0.0, y_max + 0.5 * d3, d3, dtype=np.float32)
 
-    if bmask.any():
-        cx = float(np.median(x[bmask]))
-        cy = float(np.median(y[bmask]))
+    probs_2d = np.zeros((len(p3_axis), len(p2_axis)), dtype=np.float32)
+    labels_2d = np.zeros((len(p3_axis), len(p2_axis)), dtype=np.float32)
+    ix = np.rint((ds.X_raw[:, 0] - float(p2_axis[0])) / d2).astype(int)
+    iy = np.rint((ds.X_raw[:, 1] - float(p3_axis[0])) / d3).astype(int)
+    valid = (ix >= 0) & (ix < len(p2_axis)) & (iy >= 0) & (iy < len(p3_axis))
+    probs_2d[iy[valid], ix[valid]] = probs_full[valid].astype(np.float32)
+    labels_2d[iy[valid], ix[valid]] = ds.y_cls[valid].astype(np.float32)
+    pred_2d = (probs_2d > float(threshold)).astype(np.float32)
+
+    bmask = np.abs(probs_2d - float(threshold)) < 0.04
+    if np.any(bmask):
+        yy_i, xx_i = np.where(bmask)
+        cx = float(np.median(p2_axis[xx_i]))
+        cy = float(np.median(p3_axis[yy_i]))
     else:
-        cx = float(np.median(x))
-        cy = float(np.median(y))
+        cx = float(np.median(p2_axis))
+        cy = float(np.median(p3_axis))
 
     wx = 38.0
     wy = 32.0
-    in_win = (x >= cx - wx) & (x <= cx + wx) & (y >= cy - wy) & (y <= cy + wy)
-    xs = x[in_win]
-    ys = y[in_win]
-    ls = labels[in_win]
-    ps = probs_full[in_win]
+    x_keep = (p2_axis >= cx - wx) & (p2_axis <= cx + wx)
+    y_keep = (p3_axis >= cy - wy) & (p3_axis <= cy + wy)
+    xw = p2_axis[x_keep]
+    yw = p3_axis[y_keep]
+    XW, YW = np.meshgrid(xw, yw)
+
+    probs_w = probs_2d[np.ix_(y_keep, x_keep)]
+    labels_w = labels_2d[np.ix_(y_keep, x_keep)]
+    pred_w = pred_2d[np.ix_(y_keep, x_keep)]
+    xs = XW.ravel()
+    ys = YW.ravel()
+    ls = labels_w.ravel()
+    ps = probs_w.ravel()
 
     fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.7), constrained_layout=True)
 
@@ -389,19 +412,13 @@ def _plot_local_zoom(
     cb.set_label("count")
 
     ax = axes[2]
-    sc = ax.scatter(xs, ys, c=ps, s=10, cmap="viridis", vmin=0.0, vmax=1.0)
-    # boundary overlays from local scatter approximation
-    gx = np.linspace(cx - wx, cx + wx, 180)
-    gy = np.linspace(cy - wy, cy + wy, 180)
-    GX, GY = np.meshgrid(gx, gy)
-    from scipy.interpolate import griddata
-
-    z_prob = griddata(np.column_stack([xs, ys]), ps, (GX, GY), method="linear")
-    z_lab = griddata(np.column_stack([xs, ys]), ls, (GX, GY), method="nearest")
-    if np.isfinite(z_prob).any():
-        ax.contour(GX, GY, z_prob, levels=[threshold], colors="white", linewidths=1.3, linestyles="--")
-    if np.isfinite(z_lab).any():
-        ax.contour(GX, GY, z_lab, levels=[0.5], colors="black", linewidths=1.1)
+    sc = ax.contourf(XW, YW, probs_w, levels=np.linspace(0.0, 1.0, 21), cmap="viridis", vmin=0.0, vmax=1.0)
+    # Draw boundaries directly from lattice masks for realistic piecewise boundary shape.
+    ax.contour(XW, YW, pred_w, levels=[0.5], colors="white", linewidths=1.3, linestyles="--")
+    ax.contour(XW, YW, labels_w, levels=[0.5], colors="black", linewidths=1.1)
+    mismatch = np.abs(pred_w - labels_w) > 0.5
+    if np.any(mismatch):
+        ax.scatter(XW[mismatch], YW[mismatch], s=8, c="#c0392b", alpha=0.55, edgecolors="none", label="Mismatch")
     ax.plot([], [], color="white", linestyle="--", linewidth=1.3, label="Predicted boundary")
     ax.plot([], [], color="black", linestyle="-", linewidth=1.1, label="Traditional boundary")
     ax.legend(loc="upper right", fontsize=8)
