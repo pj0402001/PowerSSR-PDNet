@@ -17,6 +17,7 @@ from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.patheffects as pe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -131,12 +132,19 @@ def main() -> None:
 
         fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.8), constrained_layout=True)
 
+        def _draw_boundaries(ax):
+            # Predicted boundary: black dashed
+            ax.contour(XW, YW, prw, levels=[0.5], colors="#111111", linewidths=1.4, linestyles="--")
+            # Traditional boundary: white solid with dark stroke for visibility
+            cs = ax.contour(XW, YW, lw, levels=[0.5], colors="white", linewidths=1.8, linestyles="-")
+            for coll in cs.collections:
+                coll.set_path_effects([pe.Stroke(linewidth=3.0, foreground="#222222"), pe.Normal()])
+
         # Left: local label scatter + boundaries
         ax = axes[0]
         ax.scatter(xs[ls <= 0.5], ys[ls <= 0.5], s=10, c="#d62728", alpha=0.48, edgecolors="none", label="Infeasible")
         ax.scatter(xs[ls > 0.5], ys[ls > 0.5], s=12, c="#2ca02c", alpha=0.65, edgecolors="none", label="Feasible")
-        ax.contour(XW, YW, prw, levels=[0.5], colors="white", linewidths=1.2, linestyles="--")
-        ax.contour(XW, YW, lw, levels=[0.5], colors="black", linewidths=1.2)
+        _draw_boundaries(ax)
 
         fp = (prw > 0.5) & (lw <= 0.5)
         fn = (prw <= 0.5) & (lw > 0.5)
@@ -149,15 +157,14 @@ def main() -> None:
         ax.set_xlabel("P_G2 (MW)")
         ax.set_ylabel("P_G3 (MW)")
         ax.grid(alpha=0.2)
-        ax.plot([], [], color="white", linestyle="--", linewidth=1.2, label="Predicted boundary")
-        ax.plot([], [], color="black", linestyle="-", linewidth=1.2, label="Traditional boundary")
+        ax.plot([], [], color="#111111", linestyle="--", linewidth=1.4, label="Predicted boundary")
+        ax.plot([], [], color="white", linestyle="-", linewidth=1.8, label="Traditional boundary")
         ax.legend(loc="upper right", fontsize=8)
 
         # Right: local probability scatter + boundaries
         ax = axes[1]
         sc = ax.scatter(xs, ys, c=ps, s=12, cmap="viridis", vmin=0.0, vmax=1.0, alpha=0.90, edgecolors="none")
-        ax.contour(XW, YW, prw, levels=[0.5], colors="white", linewidths=1.2, linestyles="--")
-        ax.contour(XW, YW, lw, levels=[0.5], colors="black", linewidths=1.2)
+        _draw_boundaries(ax)
         if np.any(fp):
             ax.scatter(XW[fp], YW[fp], s=28, c="#ff8c00", marker="x", linewidths=1.1, label="FP")
         if np.any(fn):
