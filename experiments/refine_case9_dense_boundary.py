@@ -251,6 +251,18 @@ def _quantize_and_clip(points: np.ndarray, p2_min: float, p2_max: float, p3_min:
     return p.astype(np.float32)
 
 
+def _scatter_to_grid(points: np.ndarray, values: np.ndarray, p2_axis: np.ndarray, p3_axis: np.ndarray) -> np.ndarray:
+    """Map scattered values at (p2,p3) to a regular lattice array."""
+    out = np.zeros((len(p3_axis), len(p2_axis)), dtype=np.float32)
+    d2 = float(p2_axis[1] - p2_axis[0])
+    d3 = float(p3_axis[1] - p3_axis[0])
+    ix = np.rint((points[:, 0] - float(p2_axis[0])) / d2).astype(int)
+    iy = np.rint((points[:, 1] - float(p3_axis[0])) / d3).astype(int)
+    valid = (ix >= 0) & (ix < len(p2_axis)) & (iy >= 0) & (iy < len(p3_axis))
+    out[iy[valid], ix[valid]] = values[valid].astype(np.float32)
+    return out
+
+
 def _load_oracle_class(script_path: Path):
     spec = importlib.util.spec_from_file_location("case9_oracle_mod", str(script_path))
     if spec is None or spec.loader is None:
@@ -516,10 +528,12 @@ def main() -> None:
     # Existing model outputs (for FP/FN-focused densification)
     old_probs_path = ROOT / "results" / "case9mod_boundaryloop_probs.npy"
     old_metrics_path = ROOT / "results" / "case9mod_boundaryloop_metrics.json"
-    old_probs = np.load(old_probs_path)
+    old_probs_scatter = np.load(old_probs_path)
     with open(old_metrics_path, "r", encoding="utf-8") as f:
         old_metrics = json.load(f)
     old_th = float(old_metrics.get("best_threshold", 0.645))
+    # IMPORTANT: old probs are aligned with ds_full.X_raw scatter order, not raw reshape order.
+    old_probs = _scatter_to_grid(ds_visual.X_raw, old_probs_scatter, p2, p3).reshape(-1)
     pred_old = (old_probs > old_th).astype(np.float32)
     pred_old_2d = pred_old.reshape(len(p3), len(p2))
     fp_2d = (pred_old_2d > 0.5) & (labels_2d <= 0.5)

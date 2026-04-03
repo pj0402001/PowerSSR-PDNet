@@ -1,14 +1,14 @@
 {
   "threshold": 0.45,
   "full_grid": {
-    "acc": 0.9951444444444445,
-    "f1": 0.9132764437383403,
-    "precision": 0.9986979166666663,
-    "recall": 0.8413162705667273,
-    "fp": 3,
-    "fn": 434,
-    "tp": 2301,
-    "tn": 87262
+    "acc": 0.9959888888888889,
+    "f1": 0.9296981499508163,
+    "precision": 0.9945833333333329,
+    "recall": 0.8727605118829979,
+    "fp": 13,
+    "fn": 348,
+    "tp": 2387,
+    "tn": 87252
   },
   "artifacts": {
     "figure_security": "D:\\安全域\\PowerSSR-DL\\figures\\case9mod_boundary_dense_refined_security_region_opt.png",
