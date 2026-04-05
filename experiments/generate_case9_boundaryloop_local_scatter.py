@@ -93,10 +93,8 @@ def main() -> None:
 
     d2 = float(ds.p2_grid[1] - ds.p2_grid[0])
     d3 = float(ds.p3_grid[1] - ds.p3_grid[0])
-    x_max = float(ds.p2_grid[-1])
-    y_max = float(ds.p3_grid[-1])
-    p2_axis = np.arange(0.0, x_max + 0.5 * d2, d2, dtype=np.float32)
-    p3_axis = np.arange(0.0, y_max + 0.5 * d3, d3, dtype=np.float32)
+    p2_axis = ds.p2_grid.astype(np.float32)
+    p3_axis = ds.p3_grid.astype(np.float32)
 
     labels_2d = np.zeros((len(p3_axis), len(p2_axis)), dtype=np.float32)
     probs_2d = np.zeros((len(p3_axis), len(p2_axis)), dtype=np.float32)
