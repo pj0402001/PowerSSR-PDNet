@@ -1,0 +1,26 @@
+{
+    "system": {
+        "baseMVA": 100,
+        "thermal_limit_factor": 1.0
+    },
+    "calculation": {
+        "n_points": 300,
+        "batch_size": 100,
+        "save_interval": 100
+    },
+    "solver": {
+        "max_iter": 100,
+        "tol": 0.0001,
+        "acceptable_tol": 0.001,
+        "print_level": 0
+    },
+    "debug": {
+        "enabled": true,
+        "verbose": false,
+        "save_infeasible": false
+    },
+    "database": {
+        "name": "ac_opf_results.db",
+        "auto_clear": true
+    }
+}
