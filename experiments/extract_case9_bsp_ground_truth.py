@@ -53,9 +53,6 @@ def main():
     X_unsafe = X[unsafe_mask]
     
     # 2. 设定物理距离阈值 d
-    # 已知网格: 180 MW / 299 steps ≈ 0.602 MW
-    # 对角线距离: 0.602 * sqrt(2) ≈ 0.851 MW
-    # 设定 d = 0.9 MW 完美捕获直接相邻和对角相邻的网格点
     d_threshold = 0.9 
     
     print(f"Extracting BSPs with distance threshold: {d_threshold} MW")
@@ -71,32 +68,35 @@ def main():
     df.to_csv(out_csv, index=False)
     print(f"Saved ground truth boundary to {out_csv}")
     
-    # 4. 可视化验证
+    # 4. 可视化验证 (全新高对比度版本)
     figures_dir = ROOT / "figures"
     figures_dir.mkdir(exist_ok=True)
     out_fig = figures_dir / "case9mod_bsp_ground_truth.png"
     
-    plt.figure(figsize=(8, 6), dpi=150)
-    # 画出安全区和不安全区作为背景 (为了清晰，进行下采样)
-    plt.scatter(X_safe[::5, 0], X_safe[::5, 1], c='#e6f2ff', s=1, alpha=0.5, label='Safe Region')
-    plt.scatter(X_unsafe[::5, 0], X_unsafe[::5, 1], c='#ffe6e6', s=1, alpha=0.5, label='Unsafe Region')
+    plt.figure(figsize=(10, 8), dpi=300)
     
+    # 画出背景色块 (安全=极淡蓝, 不安全=极淡红)，不采用下采样，全部绘制，用方块标记填满
+    plt.scatter(X_unsafe[:, 0], X_unsafe[:, 1], c='#ffe6e6', s=3, marker='s', edgecolors='none', label='Unsafe Region', zorder=1)
+    plt.scatter(X_safe[:, 0], X_safe[:, 1], c='#e6f2ff', s=3, marker='s', edgecolors='none', label='Safe Region', zorder=2)
+    
+    # 物理边界（BSP中点）画为纯黑色的线形点列，层级最高
     bsp_np = np.array(bsp_midpoints)
-    # 画出提取的 BSP 中点 (这是绝对的物理边界)
-    plt.scatter(bsp_np[:, 0], bsp_np[:, 1], c='blue', s=3, label='BSP Midpoints (Ground Truth)')
+    plt.scatter(bsp_np[:, 0], bsp_np[:, 1], c='black', s=8, alpha=1.0, label='BSP Boundary (Ground Truth)', zorder=5)
     
-    plt.title('Case9mod: Absolute Physical Boundary based on BSP')
-    plt.xlabel('$P_{G2}$ (MW)')
-    plt.ylabel('$P_{G3}$ (MW)')
-    # 标注论文出处的参考
-    plt.text(5, 175, f"Method: Topological Boundary Sample Pairs (d <= {d_threshold} MW)", 
-             fontsize=9, bbox=dict(facecolor='white', alpha=0.8))
+    plt.title('Case9mod: Absolute Physical Boundary (Topological BSP)', fontsize=14, fontweight='bold')
+    plt.xlabel('$P_{G2}$ (MW)', fontsize=12)
+    plt.ylabel('$P_{G3}$ (MW)', fontsize=12)
     
-    plt.legend(loc='lower right')
-    plt.grid(True, linestyle='--', alpha=0.3)
+    # 调整图例
+    plt.legend(loc='lower right', fontsize=11, markerscale=3, framealpha=0.9, edgecolor='black')
+    
+    plt.xlim(0, 180)
+    plt.ylim(0, 180)
+    plt.grid(True, linestyle=':', alpha=0.6, color='gray')
+    
     plt.tight_layout()
     plt.savefig(out_fig)
-    print(f"Saved visualization to {out_fig}")
+    print(f"Saved high-contrast visualization to {out_fig}")
 
 if __name__ == "__main__":
     main()
